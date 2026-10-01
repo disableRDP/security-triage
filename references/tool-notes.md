@@ -35,6 +35,41 @@ literal, comment, or documentation prose rather than code that executes,
 discard it — SkillSpector's static/YARA pass pattern-matches on text
 content, not on whether that text is reachable, executable code.
 
+**Scoping to a real skills collection speeds this up but does not fix
+precision — they are separate problems.** `triage.sh` scopes SkillSpector
+to the actual `SKILL.md` collection root with `--recursive` instead of
+scanning the whole repo (measured: 10min -> 35sec on a 46-skill
+monorepo, see PROJECT_HANDOFF.md), and this does produce useful,
+differentiated per-skill scores instead of one meaningless blanket
+number. But spot-checking the *highest-scoring* skill in that same real
+monorepo found two more false positives from the same root causes as
+above: "Hidden Instructions, HIGH" flagged a skill's entire normal,
+auto-generated documentation body (lines 5-273 of a 423-line file — not
+remotely hidden, just the whole doc), and "Data Exfiltration /
+External Script Fetching" misread a `curl` call to the user's own
+`http://localhost:...` server as external transmission — SkillSpector's
+heuristic doesn't distinguish localhost from a remote host. A third
+finding in the same skill ("MCP Rug Pull" for an unpinned `npx <pkg>`
+install command) was a real, valid point filed under the wrong category
+name — same mislabeling pattern as the Docker-tag case on NodeGoat.
+**Rule:** scoping the scan and reading individual skill scores does not
+mean the findings inside those skills are trustworthy by default — apply
+the same "read the actual line" discipline per-skill, not just
+per-repo. A broad span covering a whole normal doc section is likely a
+"Hidden Instructions" false positive; a `curl`/HTTP example pointed at
+`localhost` or `127.0.0.1` is likely a false "external transmission"
+positive.
+
+**Output schema differs by scan mode.** A single `SKILL.md` target
+(no `--recursive`) returns one `risk_assessment` + `issues` list, as
+documented above. A `--recursive` scan against a skills-collection root
+returns a different top-level shape: `skill_count`, `max_risk_score`,
+`skills_omitted` (a real count — some skills may be silently excluded
+from the detailed per-skill `skills[]` array, worth checking if it's
+nonzero), and a `skills[]` array where each entry has its *own*
+`risk_assessment`/`issues`. Read whichever shape is actually present;
+don't assume the single-skill schema when `--recursive` was used.
+
 ## MCP servers specifically (tier 1, no separate tool)
 
 There's no dedicated MCP-server scanner in this pipeline. Two things ruled

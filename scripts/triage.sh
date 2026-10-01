@@ -96,22 +96,82 @@ fi
 
 echo "== Tier 1: skill / MCP / agent-surface risk (self-scoping) ==" >&2
 
+# Find real SKILL.md files, excluding test/fixture paths (test fixtures
+# for an unrelated feature can contain a mock .claude/skills/ tree that
+# isn't actually meant to be reviewed as a real skill - confirmed
+# directly on a real monorepo: 46 real skills under /skills, 1 decoy
+# under /tests/fixtures/.../.claude/skills).
+real_skill_mds=()
+mcp_manifest_found=""
+if [[ -n "$DIR_TARGET" ]]; then
+  while IFS= read -r f; do
+    case "$f" in
+      */test/*|*/tests/*|*/fixture/*|*/fixtures/*|*/__fixtures__/*|*/__tests__/*) continue ;;
+    esac
+    real_skill_mds+=("$f")
+  done < <(find "$DIR_TARGET" -iname "SKILL.md" 2>/dev/null)
+  for name in server.json mcp.json .mcp.json mcp-manifest.json; do
+    found="$(find "$DIR_TARGET" -iname "$name" -print -quit 2>/dev/null)"
+    [[ -n "$found" ]] && { mcp_manifest_found="$found"; break; }
+  done
+fi
+
 if have skillspector; then
-  f="$OUT/tier1_skillspector.json"; e="$OUT/tier1_skillspector.err"
-  if [[ -n "$DIR_TARGET" ]]; then
-    # LLM-assisted analysis is opt-in (TRIAGE_SKILLSPECTOR_LLM=1): without a
-    # provider configured it would otherwise error or hang on missing
-    # credentials, so v1 defaults to static-only (--no-llm).
+  if [[ -z "$DIR_TARGET" ]]; then
+    record 1 skillspector skipped "no local files for a bare registry reference" ""
+  elif [[ ${#real_skill_mds[@]} -eq 0 && -z "$mcp_manifest_found" ]]; then
+    # Measured directly: SkillSpector took 10m2s (67% of a ~15min total
+    # pipeline run) on a 23872-file repo with no SKILL.md/MCP manifest at
+    # all - and per tool-notes.md, its output is discarded whenever one
+    # isn't present anyway. Mirrors GuardDog's existing per-manifest gate
+    # for tier 2 - that gate was missing here, which was an
+    # inconsistency, not a deliberate choice.
+    record 1 skillspector skipped "no SKILL.md/MCP manifest found - SkillSpector's analysis would be inapplicable and is discarded by rule anyway (see references/tool-notes.md); skipping avoids ~10min of wasted runtime on a large tree" ""
+  else
     llm_flag="--no-llm"
     [[ "${TRIAGE_SKILLSPECTOR_LLM:-0}" == "1" ]] && llm_flag=""
-    rc=$(run_capture "$f" "$e" -- skillspector scan "$DIR_TARGET" --format json $llm_flag)
-    # skillspector exits non-zero when it has findings to report (no
-    # --fail-on-findings needed to trigger it) - exit 0 or 1 both mean the
-    # JSON output is valid; anything else is a real tool-invocation error.
-    [[ "$rc" == "0" || "$rc" == "1" ]] && record 1 skillspector ran "exit $rc (llm=${TRIAGE_SKILLSPECTOR_LLM:-0})" "$f" \
-      || record 1 skillspector ran-with-errors "exit $rc, see $e" "$e"
-  else
-    record 1 skillspector skipped "no local files for a bare registry reference" ""
+    if [[ ${#real_skill_mds[@]} -eq 0 ]]; then
+      # MCP manifest only, no SKILL.md: scan the whole target as before -
+      # there's no "collection" structure to scope down to.
+      f="$OUT/tier1_skillspector.json"; e="$OUT/tier1_skillspector.err"
+      rc=$(run_capture "$f" "$e" -- skillspector scan "$DIR_TARGET" --format json $llm_flag)
+      [[ "$rc" == "0" || "$rc" == "1" ]] && record 1 skillspector ran "exit $rc (llm=${TRIAGE_SKILLSPECTOR_LLM:-0}, marker:$mcp_manifest_found)" "$f" \
+        || record 1 skillspector ran-with-errors "exit $rc, see $e" "$e"
+    else
+      # Scope the scan to each distinct skills-collection root instead of
+      # the whole repo: a single SKILL.md is scanned via its own
+      # directory (no --recursive needed); multiple SKILL.mds sharing a
+      # common parent (e.g. skills/<name>/SKILL.md x46) are scanned once
+      # against that shared parent with --recursive, which is what the
+      # flag is for. This is what actually fixes the runtime problem for
+      # monorepos - the earlier whole-repo-or-nothing gate above only
+      # helped the zero-SKILL.md case, not this one.
+      declare -A roots_seen
+      idx=0
+      for skill_md in "${real_skill_mds[@]}"; do
+        skill_dir="$(dirname "$skill_md")"
+        collection_root="$(dirname "$skill_dir")"
+        # If this SKILL.md is the only one under its collection_root,
+        # scan its own directory directly instead (handles the common
+        # single-skill-repo case correctly).
+        siblings=0
+        for other in "${real_skill_mds[@]}"; do
+          [[ "$(dirname "$(dirname "$other")")" == "$collection_root" ]] && siblings=$((siblings+1))
+        done
+        if [[ $siblings -le 1 ]]; then
+          root="$skill_dir"; recursive_flag=""
+        else
+          root="$collection_root"; recursive_flag="--recursive"
+        fi
+        [[ -n "${roots_seen[$root]:-}" ]] && continue
+        roots_seen[$root]=1
+        idx=$((idx+1))
+        f="$OUT/tier1_skillspector_${idx}.json"; e="${f%.json}.err"
+        rc=$(run_capture "$f" "$e" -- skillspector scan "$root" --format json $recursive_flag $llm_flag)
+        [[ "$rc" == "0" || "$rc" == "1" ]] && record 1 skillspector ran "root:$root recursive:${recursive_flag:-no} exit $rc" "$f" \
+          || record 1 skillspector ran-with-errors "root:$root exit $rc, see $e" "$e"
+      done
+    fi
   fi
 else
   record 1 skillspector skipped "not installed - pip install git+https://github.com/NVIDIA/skillspector.git" ""

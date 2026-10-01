@@ -80,23 +80,40 @@ applies; never guess which lens is "right" for the input.
    garbage output in testing). Do not present a raw tool score as if it
    were a verdict.
 
-6. **Write the synthesis.** Structure it as:
+6. **Write the synthesis.** Two parts, in this order — the first part is
+   for a reader who has never seen this skill's internals and never will:
+
+   **Part 1 — plain-language verdict (lead with this, always):**
+   2-4 sentences, no tool names, no rule IDs, no category jargon
+   ("Supply Chain", "Excessive Agency", "MCP Rug Pull" etc. belong in
+   Part 2, never in Part 1). State: is this safe to trust/install, and if
+   not, what's the one concrete thing wrong (e.g. "a dependency has 12
+   known security bugs," not "osv-scanner flagged axios@1.18.0"). If
+   nothing survived scrutiny, say so plainly ("nothing concerning found")
+   rather than padding this section with caveats that belong in Part 2.
+
+   **Part 2 — details, for whoever wants to verify:**
    - One line per tier: ran / skipped (with reason), and a one-line
      takeaway if it ran.
    - Findings grouped by confidence, not by tool: corroborated across
      multiple tiers (high confidence) vs. single-source (lower confidence,
      state which tool and why it might still be noise per the reference
      notes).
-   - A plain yes/no-leaning recommendation on whether to trust/install,
-     with the specific reasons — never a single merged numeric score
-     across tools; the tiers measure different things and forcing one
-     number is what caused the earlier false-positive failure.
-   - This exact closing line, verbatim, every time: *"This is a static-analysis-only
-     triage (v1): it does not execute the artifact, so it cannot catch
-     payloads that only activate at runtime, does not detect an
-     already-approved artifact changing later (no drift/rug-pull
-     detection), and does not adversarially test prompt-injection
-     resistance beyond static pattern matching."*
+   - Never a single merged numeric score across tools; the tiers measure
+     different things and forcing one number is what caused the earlier
+     false-positive failure. (Part 1's plain verdict is a sentence, not a
+     score — it's fine for it to be definitive even though no number is
+     computed.)
+   - This exact closing line, verbatim, every time, at the very end:
+     *"This is a static-analysis-only triage (v1): it does not execute
+     the artifact, so it cannot catch payloads that only activate at
+     runtime, does not detect an already-approved artifact changing
+     later (no drift/rug-pull detection), and does not adversarially test
+     prompt-injection resistance beyond static pattern matching."*
+
+   A reader should be able to stop after Part 1 and walk away with the
+   right answer. Part 2 exists for someone who wants to check your work,
+   not because the answer needs that much qualification to be true.
 
 ## What this is not
 

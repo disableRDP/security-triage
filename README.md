@@ -32,7 +32,7 @@ whole report on the answer.
 | Tier | Tool | Scope | Why |
 |---|---|---|---|
 | 0 | [gitleaks](https://github.com/gitleaks/gitleaks) + [OSV-Scanner](https://github.com/google/osv-scanner) | secrets, known CVEs | Exact-match tools — no semantic assumptions, always safe to run |
-| 1 | [SkillSpector](https://github.com/NVIDIA/skillspector) | Claude Code skills, MCP servers, agent configs | Self-scoping — only looks at agent-surface files it recognizes |
+| 1 | [SkillSpector](https://github.com/NVIDIA/skillspector) | Claude Code skills, MCP servers, agent configs | Skipped entirely with no `SKILL.md`/MCP manifest anywhere (its output is discarded by rule otherwise); scoped to the actual skills-collection directory with `--recursive` when a monorepo bundles several — measured 10min → 35sec on a real 46-skill repo rather than scanning the whole tree |
 | 2 | [GuardDog](https://github.com/DataDog/guarddog) | registry packages (npm/PyPI/Go/RubyGems/Cargo/GH Actions) | Runs per detected manifest, not a global guess |
 | 3 | [Semgrep](https://github.com/semgrep/semgrep) `--config auto` | general source code | No skill/app assumptions to misapply |
 
