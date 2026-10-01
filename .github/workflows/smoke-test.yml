@@ -29,10 +29,23 @@ jobs:
         with:
           repo: gitleaks/gitleaks
 
+      # osv-scanner ships bare per-platform binaries (no archive), which
+      # jaxxstorm/action-install-gh-release's asset-matching could not
+      # resolve ("Could not find asset for latest") on any of the three
+      # runners when first tried - confirmed by actually running this
+      # workflow, not assumed. Downloading explicitly instead.
       - name: Install osv-scanner
-        uses: jaxxstorm/action-install-gh-release@v3.0.0
-        with:
-          repo: google/osv-scanner
+        shell: bash
+        run: |
+          set -e
+          case "${{ matrix.os }}" in
+            ubuntu-latest) asset="osv-scanner_linux_amd64"; dest="osv-scanner" ;;
+            macos-latest) asset="osv-scanner_darwin_amd64"; dest="osv-scanner" ;;
+            windows-latest) asset="osv-scanner_windows_amd64.exe"; dest="osv-scanner.exe" ;;
+          esac
+          curl -sL -o "$RUNNER_TEMP/$dest" "https://github.com/google/osv-scanner/releases/latest/download/$asset"
+          chmod +x "$RUNNER_TEMP/$dest"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Syntax-check all scripts
         shell: bash
