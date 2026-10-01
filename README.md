@@ -45,6 +45,25 @@ against `references/tool-notes.md` for known false-positive patterns
 (see below) — forcing one number across tools that measure different
 things is exactly what produced the meaningless 100/100 result above.
 
+## Validated against real targets, not just self-scans
+
+Beyond the CI fixtures, this pipeline has been run against two real,
+independently-authored targets:
+
+- A real, clean, published Claude Code skill — zero findings across every
+  tier. Not a fabricated "it works" case; a genuine clean result.
+- [OWASP NodeGoat](https://github.com/OWASP/NodeGoat) (a real,
+  intentionally-vulnerable Node.js app, used because it has documented
+  real vulnerabilities): gitleaks found a committed RSA private key,
+  osv-scanner found **130 vulnerable packages / 312 known CVEs** against
+  its real lockfile, and Semgrep independently corroborated the
+  private-key finding. SkillSpector, run against the same target, scored
+  it 100/100 CRITICAL/DO_NOT_INSTALL with findings like "Prompt
+  Injection" matched against a plain HTML comment — the exact
+  misapplication pattern described above, reproduced on a target nobody
+  built to prove a point, and correctly discarded by the calibration rule
+  in `references/tool-notes.md` without needing a pipeline change.
+
 ## What v1 deliberately leaves out
 
 Two tools were evaluated and **not** included, on purpose:
