@@ -78,8 +78,15 @@ if have osv-scanner; then
   f="$OUT/tier0_osv.json"; e="$OUT/tier0_osv.err"
   if [[ -n "$DIR_TARGET" ]]; then
     rc=$(run_capture "$f" "$e" -- osv-scanner scan source --format json -r "$DIR_TARGET")
-    [[ "$rc" == "0" || "$rc" == "1" ]] && record 0 osv-scanner ran "exit $rc (1 = vulns found, expected)" "$f" \
-      || record 0 osv-scanner ran-with-errors "exit $rc, see $e" "$e"
+    # osv-scanner's exit codes: 0 = clean, 1 = vulns found, 128 = no
+    # package manifest/lockfile present at all - a real, common, non-error
+    # outcome (verified directly: this skill's own repo has no lockfile
+    # and exits 128 with "No package sources found"), not a tool failure.
+    case "$rc" in
+      0|1) record 0 osv-scanner ran "exit $rc (1 = vulns found, expected)" "$f" ;;
+      128) record 0 osv-scanner ran "exit 128 (no package manifest/lockfile in target - nothing to check)" "$f" ;;
+      *) record 0 osv-scanner ran-with-errors "exit $rc, see $e" "$e" ;;
+    esac
   else
     record 0 osv-scanner skipped "no local manifest for a bare registry reference" ""
   fi
