@@ -1,5 +1,7 @@
 # security-triage
 
+[![smoke-test](https://github.com/disableRDP/security-triage/actions/workflows/smoke-test.yml/badge.svg)](https://github.com/disableRDP/security-triage/actions/workflows/smoke-test.yml)
+
 A Claude Code skill that triages a third-party artifact — a Claude Code
 skill, an MCP server, a package from a registry, or a general repo — for
 security risk before you install, run, or otherwise trust it. Fully open
