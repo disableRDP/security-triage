@@ -119,6 +119,35 @@ or "agent" semantics to misapply.
 state the specific line/rule so the user can judge exploitability
 themselves — Semgrep finds patterns, not proof of exploitability.
 
+**`spawn-shell-true` / `detect-child-process` need the deepest trace of
+any Semgrep category — the rule alone cannot tell you where the command
+or its arguments originate, and that's the entire question.** Fully
+traced on a real 23,872-file app (OmniRoute, 6 `spawn-shell-true` +
+30 `detect-child-process` hits): all were false positives, via two
+distinct safe patterns worth checking for specifically —
+1. `shell: true` scoped narrowly to a documented Windows `.cmd`/`.bat`
+   shim constraint (Node's CVE-2024-27980 fix refuses to exec them
+   without a shell), where the *command* is always a hardcoded literal
+   or an OS-resolved absolute path (never attacker/request input), and
+   *arguments* are run through a purpose-built escaping utility
+   mirroring `cross-spawn`'s correct double-escaping approach before
+   reaching the shell.
+2. For a request-handling code path specifically (not just a local CLI
+   launcher an attacker would have to already be the operator of):
+   trace whether the class/function that actually spawns is ever
+   instantiated with caller-supplied arguments, or only with
+   hardcoded/environment-derived ones. `new ZcodeExecutor()` with zero
+   constructor args, falling through to server-operator environment
+   variables, is what cleared it here — check the actual instantiation
+   site, not just the class definition, since a class *accepting* an
+   `args` option proves nothing about whether anything ever supplies one
+   from untrusted input.
+
+**Rule:** never report this category as "not fully traced" or "worth a
+closer look" without actually doing the trace — unlike most Semgrep
+categories, a file:line reference alone is not enough signal to act on
+either way, and the investigation above is the actual bar.
+
 ## gitleaks / osv-scanner (tier 0)
 
 Both are exact-match tools (a literal secret pattern; a literal
