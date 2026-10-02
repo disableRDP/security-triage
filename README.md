@@ -96,30 +96,57 @@ for the one thing that would close it.
 
 ## v2 roadmap (not built yet)
 
-v2 is scoped to one thing, deliberately: **dynamic/behavioral sandbox
-execution** — the one category of attack (obfuscated/runtime-only
-payloads) static analysis structurally cannot see by construction.
-Candidate isolation layer: [Harbor](https://github.com/harbor-framework/harbor)
-(MIT, 5.7k stars, from the Terminal-Bench team) — evaluated directly by
-reading its source via NVIDIA's SkillEvaluator, which builds its own
-live-agent evaluation tier on top of it. SkillEvaluator's specific usage
-isn't reusable as-is (its task.toml generation hardcodes
-`network_mode = "public"` and its collector only captures task-outcome
-data, not security-relevant behavior — correct for evaluating whether a
-skill helps an agent, wrong for safely observing a potentially malicious
-one), but Harbor itself supports real network isolation
-(`network_mode = "no-network"`) and a clean
-`{environment, instruction, verifier}` task abstraction — the actual
-starting point would be our own Harbor task/verifier definitions, not a
-fork of SkillEvaluator's.
+v2 is scoped to **dynamic/behavioral sandbox execution** — the one
+category of attack (obfuscated/runtime-only payloads) static analysis
+structurally cannot see by construction. Candidate isolation layer:
+[Harbor](https://github.com/harbor-framework/harbor) (MIT, 5.7k stars,
+from the Terminal-Bench team) — evaluated directly by reading its source
+via NVIDIA's SkillEvaluator, which builds its own live-agent evaluation
+tier on top of it. SkillEvaluator's specific usage isn't reusable as-is
+(its task.toml generation hardcodes `network_mode = "public"` and its
+collector only captures task-outcome data, not security-relevant
+behavior — correct for evaluating whether a skill helps an agent, wrong
+for safely observing a potentially malicious one), but Harbor itself
+supports real network isolation (`network_mode = "no-network"`) and a
+clean `{environment, instruction, verifier}` task abstraction — the
+actual starting point would be our own Harbor task/verifier definitions,
+not a fork of SkillEvaluator's.
 
-**Deliberately phased out of the roadmap**, not forgotten: rug-pull/drift
-detection, adversarial prompt-injection fuzzing, SBOM generation, license
-compliance/domain-reputation checks, and an optional Snyk Agent Scan
-layer. None of these need dynamic execution to work, so bundling them
-under "v2" diluted focus on the one gap that actually requires it.
-Revisit any of them independently if a concrete need shows up — not
-speculatively, and not just because this list once mentioned them.
+**Adversarial prompt-injection fuzzing is in scope for this same work**,
+not a separate item — firing adversarial prompts at a live agent with
+the skill installed and checking whether it complies with injected
+instructions needs the same sandboxed live-agent infrastructure as the
+malicious-behavior check above. Building the sandbox without evaluating
+this would mean redoing similar work later for a capability that was
+sitting right there.
+
+**Planned as a v1.x addition, not gated on the sandbox:** domain-
+reputation checks (is a URL/domain referenced in the code a known-bad or
+newly-registered endpoint). This is a lightweight static lookup — it
+needs no dynamic execution — and would directly strengthen existing
+findings, e.g. corroborating GuardDog's "suspicious domain" heuristic
+with an actual reputation check.
+
+**Out of scope, each for its own reason, not one blanket "non-dynamic"
+rationale:**
+- **Rug-pull/drift detection** — not a lower-priority version of this
+  tool, a different product. This skill's own stated purpose is
+  point-in-time triage, not continuous monitoring of something already
+  installed (see "What this is not" in `SKILL.md`). Belongs in a sibling
+  tool, not a feature here.
+- **License compliance** — a legal/governance axis (am I allowed to
+  depend on this), orthogonal to security risk. Dedicated license
+  scanners already exist; bundling this in would blur what this tool is
+  for.
+- **SBOM generation** — plausibly useful as a durable audit record
+  someday, but it doesn't detect anything on its own and nobody's asked
+  for it yet. Shelved on "not yet justified," not "not useful" —
+  revisit if a concrete need shows up.
+- **An optional Snyk Agent Scan layer** — excluded on principle, not
+  schedule: it hard-requires a third-party account/token with no
+  anonymous path to real findings, which contradicts this project's
+  "fully open source, no account needed" design. Nothing about future
+  roadmap prioritization changes that.
 
 ## Install
 
