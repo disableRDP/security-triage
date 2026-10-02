@@ -90,40 +90,36 @@ Full reasoning for both is in `references/tool-notes.md`.
 ## Known limitations (static analysis only)
 
 This pipeline reads code; it does not run it. That means it cannot catch
-a payload that only activates at runtime, cannot tell you if something
-you already approved has since changed (no drift/rug-pull detection), and
-does not adversarially test prompt-injection resistance beyond static
-pattern matching. Every report this skill produces ends with this stated
-explicitly — see the **v2 roadmap** below for what would close these
-gaps.
+a payload that only activates at runtime. Every report this skill
+produces ends with this stated explicitly — see the **v2 roadmap** below
+for the one thing that would close it.
 
 ## v2 roadmap (not built yet)
 
-- Dynamic/behavioral sandbox execution — the highest-priority gap, since
-  it's the one category of attack (obfuscated/runtime-only payloads)
-  static analysis structurally cannot see. Candidate isolation layer:
-  [Harbor](https://github.com/harbor-framework/harbor) (MIT, 5.7k stars,
-  from the Terminal-Bench team) — evaluated directly by reading its
-  source via NVIDIA's SkillEvaluator, which builds its own live-agent
-  evaluation tier on top of it. SkillEvaluator's specific usage isn't
-  reusable as-is (its task.toml generation hardcodes
-  `network_mode = "public"` and its collector only captures
-  task-outcome data, not security-relevant behavior — correct for
-  evaluating whether a skill helps an agent, wrong for safely observing
-  a potentially malicious one), but Harbor itself supports real network
-  isolation (`network_mode = "no-network"`) and a clean
-  `{environment, instruction, verifier}` task abstraction — the actual
-  starting point would be our own Harbor task/verifier definitions, not
-  a fork of SkillEvaluator's.
-- Rug-pull/drift detection — hash-pin an approved artifact and alert if
-  it changes later.
-- Adversarial red-team fuzzing of prompt-injection resistance, beyond
-  static regex matching.
-- SBOM generation as a persisted audit artifact.
-- License compliance / domain-reputation checks.
-- An optional, opt-in Snyk Agent Scan layer for users who already have a
-  Snyk account — not a required dependency, since it hard-requires a
-  third-party token with no anonymous path to real findings.
+v2 is scoped to one thing, deliberately: **dynamic/behavioral sandbox
+execution** — the one category of attack (obfuscated/runtime-only
+payloads) static analysis structurally cannot see by construction.
+Candidate isolation layer: [Harbor](https://github.com/harbor-framework/harbor)
+(MIT, 5.7k stars, from the Terminal-Bench team) — evaluated directly by
+reading its source via NVIDIA's SkillEvaluator, which builds its own
+live-agent evaluation tier on top of it. SkillEvaluator's specific usage
+isn't reusable as-is (its task.toml generation hardcodes
+`network_mode = "public"` and its collector only captures task-outcome
+data, not security-relevant behavior — correct for evaluating whether a
+skill helps an agent, wrong for safely observing a potentially malicious
+one), but Harbor itself supports real network isolation
+(`network_mode = "no-network"`) and a clean
+`{environment, instruction, verifier}` task abstraction — the actual
+starting point would be our own Harbor task/verifier definitions, not a
+fork of SkillEvaluator's.
+
+**Deliberately phased out of the roadmap**, not forgotten: rug-pull/drift
+detection, adversarial prompt-injection fuzzing, SBOM generation, license
+compliance/domain-reputation checks, and an optional Snyk Agent Scan
+layer. None of these need dynamic execution to work, so bundling them
+under "v2" diluted focus on the one gap that actually requires it.
+Revisit any of them independently if a concrete need shows up — not
+speculatively, and not just because this list once mentioned them.
 
 ## Install
 
