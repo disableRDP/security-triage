@@ -101,7 +101,20 @@ gaps.
 
 - Dynamic/behavioral sandbox execution — the highest-priority gap, since
   it's the one category of attack (obfuscated/runtime-only payloads)
-  static analysis structurally cannot see.
+  static analysis structurally cannot see. Candidate isolation layer:
+  [Harbor](https://github.com/harbor-framework/harbor) (MIT, 5.7k stars,
+  from the Terminal-Bench team) — evaluated directly by reading its
+  source via NVIDIA's SkillEvaluator, which builds its own live-agent
+  evaluation tier on top of it. SkillEvaluator's specific usage isn't
+  reusable as-is (its task.toml generation hardcodes
+  `network_mode = "public"` and its collector only captures
+  task-outcome data, not security-relevant behavior — correct for
+  evaluating whether a skill helps an agent, wrong for safely observing
+  a potentially malicious one), but Harbor itself supports real network
+  isolation (`network_mode = "no-network"`) and a clean
+  `{environment, instruction, verifier}` task abstraction — the actual
+  starting point would be our own Harbor task/verifier definitions, not
+  a fork of SkillEvaluator's.
 - Rug-pull/drift detection — hash-pin an approved artifact and alert if
   it changes later.
 - Adversarial red-team fuzzing of prompt-injection resistance, beyond
