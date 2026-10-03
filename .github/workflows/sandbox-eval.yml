@@ -112,10 +112,7 @@ jobs:
           docker run --rm alpine:3.23.4 sh -c 'ls -la /proc/config.gz 2>&1; echo "exit $?"' || true
           mkdir -p /tmp/diag
           bash evals/sandbox/harbor/make_task.sh evals/sandbox/samples/probe-egress /tmp/diag/probe
-          printf '#!/bin/bash
-/monitor/run_under_strace.sh /skill /tmp/strace 20
-sleep 45
-' > /tmp/diag/probe/solution/solve.sh
+          { echo '#!/bin/bash'; echo '/monitor/run_under_strace.sh /skill /tmp/strace 20'; echo 'sleep 45'; } > /tmp/diag/probe/solution/solve.sh
           (harbor run -p /tmp/diag/probe -a oracle -e docker -o /tmp/diagjobs -y > /tmp/diag.log 2>&1 &)
           for i in $(seq 1 60); do
             sleep 3
