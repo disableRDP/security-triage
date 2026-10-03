@@ -1,0 +1,43 @@
+name: sandbox-eval
+
+# Evaluation of dynamic (sandboxed) execution for a possible v2. Runs only on
+# the evaluation branch and on demand, never as part of master's CI.
+on:
+  push:
+    branches: [sandbox-eval]
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Environment
+        run: |
+          docker version --format 'docker server {{.Server.Version}}'
+          uname -r
+          cat /proc/sys/kernel/yama/ptrace_scope || true
+
+      - name: Build sandbox image
+        run: docker build -t triage-sandbox -f evals/sandbox/image/Dockerfile evals/sandbox
+
+      - name: Plain docker run - raw traces
+        run: |
+          mkdir -p /tmp/results
+          for s in evals/sandbox/samples/*/; do
+            name="$(basename "$s")"
+            out="/tmp/results/$name"; mkdir -p "$out"; chmod 777 "$out"
+            echo "################ $name"
+            docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+              --pids-limit 128 --memory 512m --cpus 1 \
+              -v "$PWD/$s:/skill:ro" -v "$out:/out" \
+              triage-sandbox /monitor/run_under_strace.sh /skill /out 20
+            cat "$out/exit_codes.txt" 2>/dev/null || true
+            for t in "$out"/*.trace; do
+              [ -f "$t" ] || continue
+              echo "--- $(basename "$t") ($(wc -l < "$t") lines) ---"
+              grep -vE 'ENOENT|mmap|mprotect|brk|arch_prctl|rt_sig|set_|prlimit|getrandom' "$t" | head -60
+            done
+          done
