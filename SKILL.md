@@ -67,7 +67,12 @@ applies; never guess which lens is "right" for the input.
    every applicable tier and writes one raw output file per tool plus a
    `manifest.json` listing what ran, what was skipped (and why — almost
    always a missing CLI, which the manifest states how to install), and
-   where each tier's raw findings live.
+   where each tier's raw findings live. A tier marked `partial` ran but
+   did not cover everything (the `detail` says what was missed): treat a
+   clean result from it as "nothing found in what could be checked",
+   never as "nothing found", and if the gap could change the verdict (for
+   example no CVE coverage because dependencies have no lockfile), say so
+   in the plain-language lead, not only in the details.
 
 4. **Read every file the manifest points to.** Do not summarize from the
    manifest alone — read the actual tier output files before writing the

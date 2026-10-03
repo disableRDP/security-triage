@@ -24,6 +24,16 @@ if [[ -z "$TARGET" || -z "$OUT" ]]; then
 fi
 mkdir -p "$OUT"
 
+# Scanner config that lives OUTSIDE the target. Several scanners read
+# suppression/ignore settings from the directory being scanned, which lets a
+# hostile target switch off its own findings (verified on a fixture: each of
+# these hid a live payload under the unhardened commands). These files let us
+# pass explicit, target-independent settings instead.
+CFG="$OUT/.scanner-cfg"
+mkdir -p "$CFG/empty"
+printf '[extend]\nuseDefault = true\n' > "$CFG/gitleaks-default.toml"
+: > "$CFG/osv-empty.toml"
+
 REGISTRY_ECO=""
 REGISTRY_NAME=""
 DIR_TARGET=""
@@ -59,12 +69,48 @@ run_capture() {
   echo $?
 }
 
+# SkillSpector reports its own coverage gaps in analysis_completeness (a 3MB
+# script came back as runtime_limit + a "degraded" analyzer) - the tool is
+# honest about this, but a bare "ran" in the manifest threw it away. Prints
+# "<ran|partial>|<detail>". reference_missing is benign noise (a doc mentions
+# a path that isn't bundled) and does not count as a gap. $2=1 ignores the
+# --recursive 32-skill cap, which the caller covers by scanning the remainder.
+ss_coverage() {
+  "$PY" - "$1" "${2:-0}" <<'PY'
+import json, sys, collections
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+ignore_cap = sys.argv[2] == "1"
+blocks = [d.get("analysis_completeness")]
+if "skills" in d:
+    blocks += [s.get("analysis_completeness") for s in d["skills"]]
+reasons, limits = collections.Counter(), set()
+for a in blocks:
+    for e in (a or {}).get("ledger_exceptions", []) or []:
+        reasons[e.get("reason_code", "?")] += 1
+    for l in (a or {}).get("limitations", []) or []:
+        if ignore_cap and ("recursive skill" in l or "aggregate limit" in l):
+            continue
+        limits.add(l)
+omitted = 0 if ignore_cap else int(d.get("skills_omitted", 0) or 0)
+material = {k: v for k, v in reasons.items() if k not in {"reference_missing", "aggregate_scan_limit"}}
+bits = [f"{k} x{v}" for k, v in sorted(material.items())] + sorted(limits)
+if omitted:
+    bits.append(f"{omitted} skills unscanned")
+print(("partial" if bits else "ran") + "|" + ("coverage gaps: " + "; ".join(bits) if bits else "coverage complete"))
+PY
+}
+
 echo "== Tier 0: secrets + known CVEs ==" >&2
 
 if have gitleaks; then
   f="$OUT/tier0_gitleaks.json"; e="$OUT/tier0_gitleaks.err"
   if [[ -n "$DIR_TARGET" ]]; then
-    rc=$(run_capture "$f" "$e" -- gitleaks detect --no-git -s "$DIR_TARGET" -f json -r "$f")
+    # --config/--gitleaks-ignore-path/--ignore-gitleaks-allow: without these a
+    # target's own .gitleaks.toml allowlist, .gitleaksignore, or an inline
+    # "gitleaks:allow" comment silently drops its findings (all three hid a
+    # live token on a hostile fixture; Semgrep caught it only by luck).
+    rc=$(run_capture "$f" "$e" -- gitleaks detect --no-git -s "$DIR_TARGET" -f json -r "$f" \
+      --config "$CFG/gitleaks-default.toml" --gitleaks-ignore-path "$CFG/empty" --ignore-gitleaks-allow)
     [[ "$rc" == "0" || "$rc" == "1" ]] && record 0 gitleaks ran "exit $rc (1 = leaks found, expected)" "$f" \
       || record 0 gitleaks ran-with-errors "exit $rc, see $e" "$e"
   else
@@ -77,14 +123,29 @@ fi
 if have osv-scanner; then
   f="$OUT/tier0_osv.json"; e="$OUT/tier0_osv.err"
   if [[ -n "$DIR_TARGET" ]]; then
-    rc=$(run_capture "$f" "$e" -- osv-scanner scan source --format json -r "$DIR_TARGET")
+    # --no-ignore/--config: by default osv-scanner skips anything the target's
+    # .gitignore lists and applies the target's own osv-scanner.toml, whose
+    # PackageOverrides can mark a package ignored. Both hid all 91 CVEs of a
+    # known-vulnerable dependency on a hostile fixture.
+    rc=$(run_capture "$f" "$e" -- osv-scanner scan source --format json -r \
+      --no-ignore --config "$CFG/osv-empty.toml" "$DIR_TARGET")
     # osv-scanner's exit codes: 0 = clean, 1 = vulns found, 128 = no
     # package manifest/lockfile present at all - a real, common, non-error
     # outcome (verified directly: this skill's own repo has no lockfile
     # and exits 128 with "No package sources found"), not a tool failure.
     case "$rc" in
       0|1) record 0 osv-scanner ran "exit $rc (1 = vulns found, expected)" "$f" ;;
-      128) record 0 osv-scanner ran "exit 128 (no package manifest/lockfile in target - nothing to check)" "$f" ;;
+      128)
+        # 128 means no lockfile, NOT no dependencies. A package.json with
+        # known-vulnerable pins and no lockfile also exits 128, and this used
+        # to be reported as "nothing to check" - a clean-looking result with
+        # zero dependency coverage behind it.
+        declared="$(bash "$(dirname "$0")/detect_manifests.sh" "$DIR_TARGET" 2>/dev/null | grep -v '^github_action ' | awk '{print $1}' | sort -u | paste -sd, -)"
+        if [[ -n "$declared" ]]; then
+          record 0 osv-scanner partial "NO CVE COVERAGE: dependency manifests present (ecosystems: $declared) but no lockfile, so osv-scanner could not check them - a clean result here does not mean the dependencies are safe" "$f"
+        else
+          record 0 osv-scanner ran "exit 128 (no dependency manifests or lockfiles in target - nothing to check)" "$f"
+        fi ;;
       *) record 0 osv-scanner ran-with-errors "exit $rc, see $e" "$e" ;;
     esac
   else
@@ -135,8 +196,12 @@ if have skillspector; then
       # there's no "collection" structure to scope down to.
       f="$OUT/tier1_skillspector.json"; e="$OUT/tier1_skillspector.err"
       rc=$(run_capture "$f" "$e" -- skillspector scan "$DIR_TARGET" --format json $llm_flag)
-      [[ "$rc" == "0" || "$rc" == "1" ]] && record 1 skillspector ran "exit $rc (llm=${TRIAGE_SKILLSPECTOR_LLM:-0}, marker:$mcp_manifest_found)" "$f" \
-        || record 1 skillspector ran-with-errors "exit $rc, see $e" "$e"
+      if [[ "$rc" == "0" || "$rc" == "1" ]]; then
+        cov="$(ss_coverage "$f")"
+        record 1 skillspector "${cov%%|*}" "exit $rc (llm=${TRIAGE_SKILLSPECTOR_LLM:-0}, marker:$mcp_manifest_found); ${cov#*|}" "$f"
+      else
+        record 1 skillspector ran-with-errors "exit $rc, see $e" "$e"
+      fi
     else
       # Scope the scan to each distinct skills-collection root instead of
       # the whole repo: a single SKILL.md is scanned via its own
@@ -168,8 +233,14 @@ if have skillspector; then
         idx=$((idx+1))
         f="$OUT/tier1_skillspector_${idx}.json"; e="${f%.json}.err"
         rc=$(run_capture "$f" "$e" -- skillspector scan "$root" --format json $recursive_flag $llm_flag)
-        [[ "$rc" == "0" || "$rc" == "1" ]] && record 1 skillspector ran "root:$root recursive:${recursive_flag:-no} exit $rc" "$f" \
-          || record 1 skillspector ran-with-errors "root:$root exit $rc, see $e" "$e"
+        if [[ "$rc" == "0" || "$rc" == "1" ]]; then
+          # recursive mode: the 32-skill cap is covered by the remainder
+          # scan below, so don't flag it as a gap here
+          cov="$(ss_coverage "$f" "$([[ -n "$recursive_flag" ]] && echo 1 || echo 0)")"
+          record 1 skillspector "${cov%%|*}" "root:$root recursive:${recursive_flag:-no} exit $rc; ${cov#*|}" "$f"
+        else
+          record 1 skillspector ran-with-errors "root:$root exit $rc, see $e" "$e"
+        fi
 
         # --recursive has a hardcoded 32-skill budget (_MULTI_SKILL_MAX_SKILLS
         # in skillspector/cli.py, no flag or env override); everything past it
@@ -193,8 +264,12 @@ PY
             xn=$((xn+1))
             xf="$OUT/tier1_skillspector_${idx}_x${xn}.json"; xe="${xf%.json}.err"
             xrc=$(run_capture "$xf" "$xe" -- skillspector scan "$odir" --format json $llm_flag)
-            [[ "$xrc" == "0" || "$xrc" == "1" ]] && record 1 skillspector ran "root:$odir recursive:no (past --recursive's 32-skill cap) exit $xrc" "$xf" \
-              || record 1 skillspector ran-with-errors "root:$odir exit $xrc, see $xe" "$xe"
+            if [[ "$xrc" == "0" || "$xrc" == "1" ]]; then
+              xcov="$(ss_coverage "$xf")"
+              record 1 skillspector "${xcov%%|*}" "root:$odir recursive:no (past --recursive's 32-skill cap) exit $xrc; ${xcov#*|}" "$xf"
+            else
+              record 1 skillspector ran-with-errors "root:$odir exit $xrc, see $xe" "$xe"
+            fi
           done
         fi
       done
@@ -249,7 +324,21 @@ echo "== Tier 3: general SAST ==" >&2
 if have semgrep; then
   if [[ -n "$DIR_TARGET" ]]; then
     f="$OUT/tier3_semgrep.json"; e="$OUT/tier3_semgrep.err"
-    rc=$(run_capture "$f" "$e" -- semgrep --config auto --json "$DIR_TARGET")
+    # On a hostile fixture, plain `semgrep --config auto` missed a payload
+    # hidden by each of: a "# nosemgrep" comment (--disable-nosem), the
+    # target's own .semgrepignore (--x-ignore-semgrepignore-files), its
+    # .gitignore (--no-git-ignore), and a >1MB file (--max-target-bytes 0;
+    # the default 1000000 skips silently, and the JSON lists nothing as
+    # skipped). The --x- flag is experimental: if a future Semgrep removes
+    # it the run errors loudly (ran-with-errors) rather than under-scanning,
+    # and the CI hostile-fixture test fails.
+    # "auto" requires Semgrep metrics to be on (it errors with --metrics=off);
+    # TRIAGE_SEMGREP_CONFIG=p/default uses a named ruleset with metrics off.
+    sg_config="${TRIAGE_SEMGREP_CONFIG:-auto}"
+    sg_metrics=""
+    [[ "$sg_config" != "auto" ]] && sg_metrics="--metrics=off"
+    rc=$(run_capture "$f" "$e" -- semgrep --config "$sg_config" $sg_metrics --json \
+      --disable-nosem --no-git-ignore --max-target-bytes 0 --x-ignore-semgrepignore-files "$DIR_TARGET")
     [[ "$rc" == "0" || "$rc" == "1" ]] && record 3 semgrep ran "exit $rc" "$f" \
       || record 3 semgrep ran-with-errors "exit $rc, see $e" "$e"
   else

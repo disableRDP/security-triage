@@ -87,12 +87,39 @@ Two tools were evaluated and **not** included, on purpose:
 
 Full reasoning for both is in `references/tool-notes.md`.
 
-## Known limitations (static analysis only)
+## Hostile-target hardening
+
+Several of these scanners read ignore and suppression settings from the
+directory being scanned, which lets a hostile repo switch off its own
+findings. This was tested, not assumed: against a fixture hiding one
+payload per mechanism (an inline `gitleaks:allow`, a target
+`.gitleaks.toml`, a `.gitignore`d lockfile, an `osv-scanner.toml` override,
+`# nosemgrep`, a `.semgrepignore`, a file over Semgrep's silent 1MB cap),
+stock scanner behavior reported **6 of 13** hidden payloads. The pipeline
+now passes explicit target-independent settings and reports all of them.
+CI re-runs a 10-payload version of that fixture on every push; run
+locally, that test fails against the pre-hardening script and passes
+against the current one. Details and the full table are in
+`references/tool-notes.md`.
+
+A tier whose result can't be trusted to be complete is marked `partial`
+in the manifest rather than `ran`, e.g. a `package.json` with no lockfile
+(osv-scanner can't check unpinned dependencies) or a SkillSpector run that
+hit its own runtime limit.
+
+## Known limitations
 
 This pipeline reads code; it does not run it. That means it cannot catch
 a payload that only activates at runtime. Every report this skill
 produces ends with this stated explicitly — see the **v2 roadmap** below
 for the one thing that would close it.
+
+Also not covered: secrets that were committed and later removed (staging
+clones with `--depth 1` and gitleaks scans the working tree), and
+SkillSpector's LLM-assisted analyzers (off by default, so it runs
+static-only). Semgrep's default `--config auto` requires Semgrep's metrics
+to be enabled, which sends usage metadata to semgrep.dev; set
+`TRIAGE_SEMGREP_CONFIG=p/default` to run with metrics off instead.
 
 ## v2 roadmap (not built yet)
 

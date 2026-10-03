@@ -213,6 +213,57 @@ on what looks like an example/placeholder key is the main realistic false
 positive here — say so explicitly if the matched string looks like a
 placeholder (e.g., contains "example", "xxxx", "00000000").
 
+## Hostile targets and silent partial coverage (swept 2026-10-03)
+
+A triage tool is only as trustworthy as its *negative* result, so each tier
+was tested against a hostile fixture where one payload was hidden per
+mechanism. With the scanners' stock behavior, **6 of 13 hidden payloads
+were reported**. Every gap below was reproduced, not inferred. Two of
+them (the recursive skill cap, and Semgrep's size cap) had been silently
+under-scanning real runs.
+
+| Tool | Hidden by | Fix in `triage.sh` |
+|---|---|---|
+| gitleaks | inline `gitleaks:allow`; the target's own `.gitleaks.toml` allowlist | `--ignore-gitleaks-allow`, `--config` (default rules only), `--gitleaks-ignore-path` (empty dir) |
+| osv-scanner | the target's `.gitignore`; its own `osv-scanner.toml` `PackageOverrides` | `--no-ignore`, `--config` (empty file) |
+| Semgrep | `# nosemgrep`; the target's `.semgrepignore`; any file over 1,000,000 bytes (skipped with **nothing** listed as skipped) | `--disable-nosem`, `--no-git-ignore`, `--max-target-bytes 0`, `--x-ignore-semgrepignore-files` |
+| SkillSpector | a baseline file shipped in the target | **None needed**: it ignores shipped baselines unless `--use-shipped-baseline` is passed, which we never do. Verified: 3 findings reported with a baseline present, 0 only with the opt-in |
+
+Things that were assumed and turned out **wrong or unnecessary**: Semgrep
+does *not* skip `tests/` or `vendor/` by default in this version (tested,
+both scanned), so no extra include rule is needed.
+
+**Redundancy helped, by accident.** Semgrep's secret rules flagged the
+planted token in all four secret files, including both that gitleaks had
+been talked out of. Layering is a real defense here, not just tidiness.
+
+**Status values.** `partial` means the tool ran but did not cover
+everything, and the manifest `detail` says what was missed. Two sources:
+- osv-scanner exits 128 for "no lockfile", which is *not* "no
+  dependencies": a `package.json` pinning known-vulnerable versions with no
+  lockfile also exits 128. It used to be reported as "nothing to check".
+  It is now `partial` ("NO CVE COVERAGE") whenever a dependency manifest is
+  present.
+- SkillSpector reports its own gaps in `analysis_completeness` (a 3MB
+  script gave `runtime_limit` plus a `degraded` analyzer). `reference_missing`
+  is benign noise and ignored; anything else makes the tier `partial`.
+
+**Rule:** never describe a `partial` tier as "nothing found". Say "nothing
+found in what could be checked" and name the gap.
+
+**Semgrep `--config auto` requires metrics to be on** (verified: it errors
+with `--metrics=off`). That means usage metadata goes to semgrep.dev on
+every scan; I did not verify exactly what is sent. For a target you can't
+let that touch, set `TRIAGE_SEMGREP_CONFIG=p/default`, which runs with
+metrics off (verified to produce the same findings on a test fixture). The
+`--x-ignore-semgrepignore-files` flag is experimental; if a future Semgrep
+removes it the run errors loudly, and the hostile-fixture CI test fails.
+
+**Known gaps not fixed:** secrets that were committed and later removed
+are invisible (staging clones with `--depth 1`, and gitleaks runs
+`--no-git`); and SkillSpector runs static-only by default, so its
+LLM-assisted semantic analyzers are off (the manifest shows `llm=0`).
+
 ## A note on this file itself
 
 The false-positive examples above are written out using the actual

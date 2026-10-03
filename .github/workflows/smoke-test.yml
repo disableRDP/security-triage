@@ -105,3 +105,74 @@ jobs:
           result="$(bash scripts/stage.sh "npm:left-pad")"
           [[ "$result" == "REGISTRY:npm:left-pad" ]] || { echo "FAIL: got '$result'"; exit 1; }
           echo "OK: registry reference staged correctly"
+
+      # Regression test for the hardening in triage.sh: a hostile target must
+      # not be able to hide its own findings. Each payload below is hidden by
+      # a different mechanism; with the pre-hardening scanner commands only 6
+      # of these 13 were reported. This also fails if a future Semgrep drops
+      # the experimental --x-ignore-semgrepignore-files flag (the run would
+      # error instead of silently under-scanning). The token is assembled at
+      # runtime from a split literal so no secret-shaped string is committed.
+      - name: Hostile-fixture test - target-supplied suppression must not hide findings
+        shell: bash
+        run: |
+          set -e
+          root="$(mktemp -d)"
+          fix="$root/hostile"
+          mkdir -p "$fix/ignored_dir" "$fix/plain_dir" "$fix/cfg_dir"
+          ( cd "$fix" && git init -q )
+          tok="ghp""_Zq8Xk2Lm9Pv4Rt7Ws1Yd6Fn3Hc5Jb0GaEiOu"
+          pay='eval(process.argv[2]);'
+          printf 'ignored_dir/\n' > "$fix/.gitignore"
+          printf 'sg_ignored.js\n' > "$fix/.semgrepignore"
+          cat > "$fix/.gitleaks.toml" <<'EOF'
+          [extend]
+          useDefault = true
+          [allowlist]
+          paths = ['''secret_cfg\.txt''']
+          EOF
+          cat > "$fix/cfg_dir/osv-scanner.toml" <<'EOF'
+          [[PackageOverrides]]
+          name = "django"
+          ecosystem = "PyPI"
+          ignore = true
+          reason = "hostile"
+          EOF
+          echo "token=$tok" > "$fix/secret_plain.txt"
+          echo "token=$tok # gitleaks:allow" > "$fix/secret_allow.txt"
+          echo "token=$tok" > "$fix/secret_cfg.txt"
+          echo "$pay" > "$fix/plain.js"
+          echo "$pay // nosemgrep" > "$fix/nosem.js"
+          echo "$pay" > "$fix/sg_ignored.js"
+          { printf '// '; head -c 1100000 /dev/zero | tr '\0' 'x'; printf '\n'; echo "$pay"; } > "$fix/big.js"
+          for d in plain_dir ignored_dir cfg_dir; do echo "django==1.0" > "$fix/$d/requirements.txt"; done
+          bash scripts/triage.sh "$fix" "$root/out" >/dev/null
+          python - "$root/out" <<'PY'
+          import json, sys
+          out = sys.argv[1]
+          def rel(p): return p.replace("\\", "/").split("/hostile/", 1)[1]
+          load = lambda n: json.load(open(out + "/" + n, encoding="utf-8"))
+          gl = {rel(f["File"]) for f in load("tier0_gitleaks.json")}
+          osv = {rel(r["source"]["path"]) for r in load("tier0_osv.json").get("results", [])
+                 if any(p.get("vulnerabilities") for p in r.get("packages", []))}
+          sg = {rel(r["path"]) for r in load("tier3_semgrep.json").get("results", []) if "eval-detected" in r["check_id"]}
+          want = {
+              "gitleaks": (gl, {"secret_plain.txt", "secret_allow.txt", "secret_cfg.txt"}),
+              "osv-scanner": (osv, {"plain_dir/requirements.txt", "ignored_dir/requirements.txt", "cfg_dir/requirements.txt"}),
+              "semgrep": (sg, {"plain.js", "nosem.js", "sg_ignored.js", "big.js"}),
+          }
+          bad = {t: sorted(w - got) for t, (got, w) in want.items() if w - got}
+          if bad:
+              print("HIDDEN FROM SCANNER (hostile target suppressed its own findings):", bad)
+              sys.exit(1)
+          print("OK: all 10 hidden payloads reported")
+          PY
+          lockless="$(mktemp -d)"
+          echo '{"name":"x","dependencies":{"lodash":"4.17.15"}}' > "$lockless/package.json"
+          bash scripts/triage.sh "$lockless" "$root/out2" >/dev/null
+          python - "$root/out2/manifest.json" <<'PY'
+          import json, sys
+          osv = next(t for t in json.load(open(sys.argv[1], encoding="utf-8"))["tiers"] if t["tool"] == "osv-scanner")
+          assert osv["status"] == "partial" and "NO CVE COVERAGE" in osv["detail"], f"lockfile-less manifest must not read as clean: {osv}"
+          print("OK: manifest without a lockfile is reported as partial coverage, not clean")
+          PY
