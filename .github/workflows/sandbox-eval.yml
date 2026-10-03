@@ -141,6 +141,19 @@ jobs:
           echo "== harbor probe result =="; cat /tmp/diagjobs/*/probe-egress__*/verifier/probe.py.stdout 2>/dev/null || echo "(none)"
           tail -5 /tmp/diag.log
 
+      - name: Harbor - hardened tasks (own compose overlay, empty network, root tracer)
+        run: |
+          SECONDS=0
+          mkdir -p /tmp/htasks-hard
+          for s in evals/sandbox/samples/*/; do
+            HARDEN=1 bash evals/sandbox/harbor/make_task.sh "$s" "/tmp/htasks-hard/$(basename "$s")"
+          done
+          harbor run -p /tmp/htasks-hard -a oracle -e docker -o /tmp/hjobs-hard -n 1 -y 2>&1 | tail -6
+          echo "harbor hardened run: ${SECONDS}s"
+          echo; echo "=== verdicts, Harbor hardened ==="; python evals/sandbox/report.py harbor /tmp/hjobs-hard
+          echo; echo "=== containment probe, Harbor hardened ==="
+          cat /tmp/hjobs-hard/*/probe-egress__*/verifier/probe.py.stdout 2>/dev/null || echo "(no probe stdout)"
+
       - name: Upload traces and Harbor jobs
         if: always()
         uses: actions/upload-artifact@v4
@@ -152,3 +165,4 @@ jobs:
             /tmp/plain-bridge
             /tmp/plain-hard
             /tmp/hjobs
+            /tmp/hjobs-hard

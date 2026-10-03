@@ -5,6 +5,8 @@ set -euo pipefail
 skill="$1"; task="$2"
 here="$(cd "$(dirname "$0")/.." && pwd)"
 name="$(basename "$skill")"
+harden="${HARDEN:-0}"
+agent_user="sandbox"; [ "$harden" = "1" ] && agent_user="root"
 rm -rf "$task"; mkdir -p "$task/environment" "$task/solution" "$task/tests"
 
 cp -r "$skill" "$task/environment/skill"
@@ -23,7 +25,7 @@ description = "Observe what a skill's scripts attempt when run with no network."
 
 [agent]
 timeout_sec = 120.0
-user = "sandbox"
+user = "$agent_user"
 
 [verifier]
 timeout_sec = 60.0
@@ -39,10 +41,25 @@ TOML
 
 echo "Run the skill's scripts under observation. (The oracle agent ignores this text.)" > "$task/instruction.md"
 
-cat > "$task/solution/solve.sh" <<'SH'
-#!/bin/bash
-/monitor/run_under_strace.sh /skill /tmp/strace 20
-SH
+if [ "$harden" = "1" ]; then
+  { echo '#!/bin/bash'; echo 'RUN_AS=sandbox /monitor/run_under_strace.sh /skill /tmp/strace 20'; } > "$task/solution/solve.sh"
+  cat > "$task/environment/docker-compose.yaml" <<'YML'
+services:
+  main:
+    network_mode: none
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - NET_RAW
+      - MKNOD
+      - SETFCAP
+      - AUDIT_WRITE
+      - SYS_CHROOT
+YML
+else
+  { echo '#!/bin/bash'; echo '/monitor/run_under_strace.sh /skill /tmp/strace 20'; } > "$task/solution/solve.sh"
+fi
 
 cat > "$task/tests/test.sh" <<'SH'
 #!/bin/bash
