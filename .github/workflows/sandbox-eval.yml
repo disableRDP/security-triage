@@ -35,9 +35,10 @@ jobs:
               -v "$PWD/$s:/skill:ro" -v "$out:/out" \
               triage-sandbox /monitor/run_under_strace.sh /skill /out 20
             cat "$out/exit_codes.txt" 2>/dev/null || true
-            for t in "$out"/*.trace; do
-              [ -f "$t" ] || continue
-              echo "--- $(basename "$t") ($(wc -l < "$t") lines) ---"
-              grep -vE 'ENOENT|mmap|mprotect|brk|arch_prctl|rt_sig|set_|prlimit|getrandom' "$t" | head -60
-            done
           done
+
+      - name: Upload full traces
+        uses: actions/upload-artifact@v4
+        with:
+          name: traces
+          path: /tmp/results
