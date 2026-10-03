@@ -48,6 +48,7 @@ cat > "$task/tests/test.sh" <<'SH'
 #!/bin/bash
 mkdir -p /logs/verifier
 python3 /monitor/analyze_trace.py /tmp/strace > /logs/verifier/ioc_report.json
+cp /tmp/strace/*.stdout /logs/verifier/ 2>/dev/null
 python3 - <<'PY'
 import json
 d = json.load(open("/logs/verifier/ioc_report.json"))

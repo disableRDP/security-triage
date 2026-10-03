@@ -2,8 +2,8 @@ name: sandbox-eval
 
 # Evaluation of dynamic (sandboxed) execution for a possible v2. Runs only on
 # the evaluation branch and on demand, never as part of master's CI.
-# Every sample is a harmless canary: it touches only fake credential files and
-# 198.51.100.7 (TEST-NET-2, RFC 5737, never routable).
+# Every sample is a harmless canary or an isolation probe: they touch only fake
+# credential files and 198.51.100.7 (TEST-NET-2, RFC 5737, never routable).
 on:
   push:
     branches: [sandbox-eval]
@@ -12,7 +12,7 @@ on:
 jobs:
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -28,30 +28,45 @@ jobs:
           docker build -t triage-sandbox -f evals/sandbox/image/Dockerfile evals/sandbox
           echo "image build: ${SECONDS}s"
 
-      # A: plain docker run, tracer and script share a user, output dir writable by it.
-      - name: Plain docker run - naive (tracer and script share a user)
+      # A listener on the HOST. A sandbox that can reach it can reach the machine it runs on.
+      - name: Start host-side listener on :8099
         run: |
-          SECONDS=0
-          for s in evals/sandbox/samples/*/; do
-            name="$(basename "$s")"; out="/tmp/plain-naive/$name"
-            mkdir -p "$out"; chmod 777 "$out"
-            docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
-              --pids-limit 128 --memory 512m --cpus 1 \
-              -v "$PWD/$s:/skill:ro" -v "$out:/out" \
-              triage-sandbox /monitor/run_under_strace.sh /skill /out 20 > /dev/null
-          done
-          echo "naive: ${SECONDS}s for $(ls evals/sandbox/samples | wc -l) samples"
-          python evals/sandbox/report.py plain /tmp/plain-naive
+          nohup python3 -m http.server 8099 --bind 0.0.0.0 >/dev/null 2>&1 &
+          sleep 2; curl -s -o /dev/null -w "host listener reachable from host: %{http_code}\n" http://127.0.0.1:8099/
 
-      # B: tracer runs as root and only the script drops to the sandbox user, so the
-      # script cannot touch the trace. Root filesystem read-only, capabilities minimal.
+      - name: Plain docker run, four network modes
+        run: |
+          docker network create --internal sbx-internal >/dev/null
+          run_mode () {   # run_mode <label> <extra docker flags...>
+            label="$1"; shift; SECONDS=0
+            for s in evals/sandbox/samples/*/; do
+              name="$(basename "$s")"; out="/tmp/plain-$label/$name"
+              mkdir -p "$out"; chmod 777 "$out"
+              docker run --rm "$@" --cap-drop ALL --security-opt no-new-privileges \
+                --pids-limit 128 --memory 512m --cpus 1 \
+                -v "$PWD/$s:/skill:ro" -v "$out:/out" \
+                triage-sandbox /monitor/run_under_strace.sh /skill /out 20 > /dev/null
+            done
+            echo "mode $label: ${SECONDS}s"
+          }
+          run_mode none      --network none
+          run_mode internal  --network sbx-internal
+          run_mode bridge    --network bridge
+          echo; echo "=== containment probe, by network mode (bridge is the control: it SHOULD reach out) ==="
+          for m in none internal bridge; do
+            echo "--- $m ---"; cat /tmp/plain-$m/probe-egress/probe.py.stdout
+          done
+          echo; echo "=== verdicts, mode: none ==="; python evals/sandbox/report.py plain /tmp/plain-none
+          echo; echo "=== verdicts, mode: internal ==="; python evals/sandbox/report.py plain /tmp/plain-internal
+
+      # tracer as root, script drops to an unprivileged user; read-only rootfs.
       - name: Plain docker run - hardened (tracer isolated from the script)
         run: |
           SECONDS=0
           for s in evals/sandbox/samples/*/; do
             name="$(basename "$s")"; out="/tmp/plain-hard/$name"
             sudo install -d -o root -g root -m 755 "$out"
-            docker run --rm --network none --user 0 \
+            docker run --rm --network sbx-internal --user 0 \
               --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add SYS_PTRACE \
               --security-opt no-new-privileges --read-only \
               --tmpfs /tmp:rw,mode=1777 --tmpfs /workspace:rw,mode=1777 \
@@ -59,15 +74,21 @@ jobs:
               -v "$PWD/$s:/skill:ro" -v "$out:/out" \
               triage-sandbox /monitor/run_under_strace.sh /skill /out 20 > /dev/null
           done
-          echo "hardened: ${SECONDS}s for $(ls evals/sandbox/samples | wc -l) samples"
-          python evals/sandbox/report.py plain /tmp/plain-hard
+          echo "hardened: ${SECONDS}s"
+          sudo chmod -R a+rX /tmp/plain-hard
+          echo; echo "=== verdicts, hardened ==="; python evals/sandbox/report.py plain /tmp/plain-hard
+          echo; echo "=== tamper debug: security-relevant lines that survived ==="
+          for m in none hard; do
+            echo "--- tamper, mode $m ---"
+            grep -E "credentials|connect\(.*inet_addr|/out/|execve\(\"/usr/bin/curl" /tmp/plain-$m/evasive-tamper/tamper.sh.trace | grep -v nscd | cut -c1-170 | head -8
+            ls -la /tmp/plain-$m/evasive-tamper/ | sed -n '2,6p'
+          done
 
-      # C: the same samples as Harbor tasks (oracle agent: runs a fixed script, no LLM).
       - name: Install Harbor
         run: |
           SECONDS=0
           pip install --quiet "harbor==0.23.0"
-          echo "harbor install: ${SECONDS}s"; pip list 2>/dev/null | wc -l
+          echo "harbor install: ${SECONDS}s"
 
       - name: Harbor - each sample as a task (oracle agent, no-network)
         run: |
@@ -76,9 +97,11 @@ jobs:
           for s in evals/sandbox/samples/*/; do
             bash evals/sandbox/harbor/make_task.sh "$s" "/tmp/htasks/$(basename "$s")"
           done
-          harbor run -p /tmp/htasks -a oracle -e docker -o /tmp/hjobs -n 1 -y 2>&1 | tail -40
+          harbor run -p /tmp/htasks -a oracle -e docker -o /tmp/hjobs -n 1 -y 2>&1 | tail -12
           echo "harbor run: ${SECONDS}s"
-          python evals/sandbox/report.py harbor /tmp/hjobs
+          echo; echo "=== verdicts, Harbor ==="; python evals/sandbox/report.py harbor /tmp/hjobs
+          echo; echo "=== containment probe, Harbor no-network ==="
+          cat /tmp/hjobs/*/probe-egress__*/verifier/probe.py.stdout 2>/dev/null || echo "(no probe stdout)"
 
       - name: Upload traces and Harbor jobs
         if: always()
@@ -86,6 +109,8 @@ jobs:
         with:
           name: results
           path: |
-            /tmp/plain-naive
+            /tmp/plain-none
+            /tmp/plain-internal
+            /tmp/plain-bridge
             /tmp/plain-hard
             /tmp/hjobs
