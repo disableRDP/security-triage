@@ -83,14 +83,27 @@ applies; never guess which lens is "right" for the input.
    tool (e.g., discard SkillSpector findings entirely if the target has no
    `SKILL.md` anywhere — that is the exact misapplication that produced
    garbage output in testing). Do not present a raw tool score as if it
-   were a verdict. For SkillSpector specifically, never quote its score,
-   severity label, or recommendation at all, even on a genuine skill
-   target, and report only findings that survive reading the flagged
-   line, deduplicated (the same pattern repeated across skills or links
-   is one observation). Its "analysis-evasion" findings are its own
-   coverage gaps, so they belong in the limitations, not the findings.
-   If a `--recursive` result shows `skills_omitted > 0` in the final
-   manifest, coverage was partial and the report must say so.
+   were a verdict. For SkillSpector specifically: don't quote its score,
+   severity label, or recommendation (its score separates malicious from
+   benign skills only moderately, and reached 97/CRITICAL on a harmless
+   templated-docs collection), and report only findings that survive
+   reading the flagged line, deduplicated (the same pattern repeated
+   across skills or links is one observation). Weight categories by what
+   was measured against labeled data in `references/tool-notes.md`: code
+   execution, tool misuse (TM2), YARA, high-severity least-privilege and
+   exfiltration findings are the primary signal; exfiltration (E1),
+   rug-pull, analysis-evasion, autonomous-decision, snooping and
+   whitespace findings did not separate malicious from benign and are
+   noise unless the line itself says otherwise. "Analysis-evasion" is the
+   tool's own coverage gap, so it goes in the limitations. A flag means
+   "read this skill", never "this is malicious": at realistic prevalence
+   only about 1 flag in 8 is. If a skill's payload is plain-language
+   instructions, a clean static result is weak evidence (recall there is
+   about half). If a `--recursive` result shows `skills_omitted > 0` in
+   the final manifest, coverage was partial and the report must say so.
+   A `staging/integrity` entry marked `partial` means files were removed
+   from the scanned tree (often antivirus), so some of the artifact was
+   never analyzed; say that plainly.
 
 6. **Write the synthesis.** Two parts, in this order — the first part is
    for a reader who has never seen this skill's internals and never will:

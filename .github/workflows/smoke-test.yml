@@ -176,3 +176,29 @@ jobs:
           assert osv["status"] == "partial" and "NO CVE COVERAGE" in osv["detail"], f"lockfile-less manifest must not read as clean: {osv}"
           print("OK: manifest without a lockfile is reported as partial coverage, not clean")
           PY
+
+      # Files removed from the scanned tree (antivirus, failed checkout)
+      # must not silently shrink coverage: on a real malicious-skill sample,
+      # Defender deleted the 20 most blatant skills and the pipeline simply
+      # never saw them. A tracked file missing at the end of a scan has to
+      # surface as partial coverage.
+      - name: Integrity test - a deleted tracked file must be reported as partial
+        shell: bash
+        run: |
+          set -e
+          root="$(mktemp -d)"
+          repo="$root/repo"
+          mkdir -p "$repo"
+          ( cd "$repo" && git init -q && echo hello > a.txt && echo world > b.txt \
+            && git add . && git -c user.email=ci@example.com -c user.name=ci commit -qm init )
+          bash scripts/triage.sh "$repo" "$root/intact" >/dev/null
+          rm -f "$repo/b.txt"
+          bash scripts/triage.sh "$repo" "$root/missing" >/dev/null
+          python - "$root/intact/manifest.json" "$root/missing/manifest.json" <<'PY'
+          import json, sys
+          get = lambda p: next(t for t in json.load(open(p, encoding="utf-8"))["tiers"] if t["tool"] == "integrity")
+          intact, missing = get(sys.argv[1]), get(sys.argv[2])
+          assert intact["status"] == "ran", f"intact tree must pass: {intact}"
+          assert missing["status"] == "partial" and "b.txt" in missing["detail"], f"missing file must be reported: {missing}"
+          print("OK: intact tree passes; a deleted tracked file is reported as partial")
+          PY

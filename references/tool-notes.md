@@ -113,16 +113,112 @@ show it is unreliable on a skill that ships scripts (it correctly caught
 a real CLAUDE.md-persistence issue in an earlier, script-bearing skill).
 (3) 34 inspected is a sample, not all 375.
 
-**Rules that follow:**
-- **Never quote SkillSpector's score, severity label, or recommendation
-  in a report**, even on genuinely skill-shaped targets. On this
-  collection it ranged to 97/CRITICAL with no true finding behind it.
+**Rules that follow (read the ground-truth section below before applying
+these; its measurements qualify the first bullet):**
+- **Do not quote SkillSpector's score, severity label, or recommendation
+  in a report.** On this collection it ranged to 97/CRITICAL with no true
+  finding behind it. (Ground-truth data below shows the score is *not*
+  noise on a typical mixed population, so this collection is an outlier,
+  not the rule. The number still can't be read without knowing which kind
+  of collection it came from.)
 - **Report only findings that survive reading the actual flagged line**,
   and deduplicate: the same pattern repeated across skills (22 identical
   RP1) or links (72 identical AE1) is one observation, not N.
 - **AE1 goes in the limitations line**, not the findings.
 - **Declared capabilities** (AS3/E3/RA2 matching the skill's own stated
   purpose) get one plain-language mention each, not an alarm.
+
+### Ground truth: MalSkillBench sample (measured 2026-10-03)
+
+The OmniRoute work above is my judgment of individual findings. This is
+measured against **labeled data**: [MalSkillBench](https://github.com/lxyeternal/MalSkillBench)
+(malicious skills confirmed by runtime sandboxing or manual review; benign
+= most-downloaded real skills). Seeded random sample (seed 20261003): 111
+malicious, 64 benign, run through the full pipeline unmodified.
+
+**Caveats first, because they bound everything below.**
+- *Provenance is not labeled in the release.* Names with a `__CI/PI/MIXED_Bn__`
+  suffix are LLM-generated; unsuffixed names are a mix of real-world samples
+  and unsuffixed generated ones (~30% wild by the paper's counts). I report
+  the two groups separately and cannot isolate the wild ones.
+- *Antivirus deleted 20 of the 111 malicious skills before they were
+  scanned* (Windows Defender; 0 of 64 benign, 0 of 48 generated, all from
+  the unsuffixed group). Those are the most blatant samples, so every recall
+  figure below is **biased low**, and the pipeline reported nothing about
+  them (now fixed: see the `staging/integrity` entry).
+- The malicious:benign mix here (91:64) is nothing like reality. At roughly
+  2% prevalence (Snyk's ToxicSkills found 76 confirmed malicious payloads
+  among 3,984 skills; I'm treating that as about 1.9%), the 64% recall /
+  9.4% false-positive rate measured below works
+  out to **about 12% precision**: most flags would be false alarms.
+- Generated samples may be easier or harder than real ones; the benign set
+  is 64 of 4,000. This is one sample, not a benchmark result.
+
+**Results (91 malicious scanned, 64 benign):**
+
+| | benign | unsuffixed-malicious (43) | generated-malicious (48) |
+|---|---|---|---|
+| Any SkillSpector finding | **44%** | 81% | 83% |
+| Median SkillSpector score | 0 | 41 | 49 |
+| Score AUC vs benign (0.5 = noise) | n/a | 0.79 | 0.81 |
+| Semgrep: any finding | 3% | 36% (33/91 across both) | |
+| gitleaks: any finding | 3% | 5% (5/91 across both) | |
+
+- **"Any finding" is a bad rule** (44% of benign skills trip it).
+- **The score carries real, moderate signal here (AUC about 0.8).** This
+  corrects my earlier "score is noise" conclusion, which came from one
+  unusually template-heavy docs collection.
+- **gitleaks is nearly useless for detecting malicious skills** (5% vs 3%),
+  as expected: these attacks don't need hardcoded secrets. Keep it for the
+  case it's built for.
+- **Semgrep is high precision, modest recall** (36% vs 3%). Rules that fired
+  on malicious skills and zero benign ones: `subprocess-shell-true` (16),
+  `insecure-file-permissions` (7), `request-with-http` (4),
+  `python-reverse-shell` (3), `exec-detected` (2).
+
+**Per-category separation (share of skills with at least one finding):**
+
+| Behaves like a real signal | benign | malicious | | Behaves like noise | benign | malicious |
+|---|---|---|---|---|---|---|
+| AST4 Dangerous Code Execution | 0% | 37-38% | | E1 Data Exfiltration (MEDIUM) | 23% | 23-27% |
+| TM2 Tool Misuse | 0% | 9-10% | | RP1 MCP Rug Pull | 8% | 0-4% |
+| YR1 YARA Match | 0% | 2-9% | | AE1 analysis-evasion | 2% | 2% |
+| LP1 MCP Least Privilege (HIGH) | 0% | 6-7% | | EA2 Autonomous Decision | 5% | 4-5% |
+| P2 Prompt Injection (HIGH) | 0% | 7-8% | | AS3 Agent Snooping | 2% | 2% |
+| AST5, E2 | 0% | 4-9% | | P9 Whitespace Padding | 2% | 0% |
+| *Moderate:* LP3 undeclared capability | 5% | 46-49% | | *Moderate:* TM1 Tool Misuse (HIGH) | 5% | 23-28% |
+
+Selecting "high-precision" categories on a random half of the skills and
+testing on the other half (300 random splits) gave **64% recall at 9.4%
+false positives**, versus 82% / 44% for "any finding". AST4, TM2, YR1, P2,
+AST5 and LP1 were selected in 270 or more of the 300 splits, so they are
+stable, not an accident of one split.
+
+**Where it is blind.** Among generated skills, recall by attack vector
+(in-sample, so optimistic): code injection 75%, mixed instruction-and-code
+71%, **pure prompt injection 50%**. Static pattern matching is weakest
+exactly where the payload is natural language. (This is the case the
+roadmap's dynamic prompt-injection testing is meant to cover.)
+
+**One category needs both views.** P2 "Hidden Instructions" never fired on
+the 64 benign skills here, yet fired on 25 of OmniRoute's 32 because its
+generator stamps an HTML comment on every file. A category being
+high-precision *in aggregate* does not replace reading the flagged line.
+
+**Revised rules (these replace the blanket "never trust SkillSpector"):**
+1. Findings in AST4, AST5, TM2, YARA, LP1, E2, and (after reading the
+   comment) P2 are the primary signal. They almost never fire on benign
+   skills. Still read the flagged line.
+2. E1, RP1, AE1, EA2, AS3 and P9 do not separate malicious from benign:
+   treat as noise unless the flagged line itself says otherwise.
+3. TM1, LP3, PE3 and SC2 are moderate: they raise the odds but need a
+   read-through. LP3 (an undeclared capability) is the best single
+   separator but has a 5% benign rate.
+4. Never say "this skill is malicious" from these flags. At realistic
+   prevalence a flag means "read this skill", about 1 in 8 of which will
+   actually be bad. Say so.
+5. A clean result is not a clean bill of health for a skill whose payload is
+   plain-language instructions: static recall there is about half.
 
 ## MCP servers specifically (tier 1, no separate tool)
 

@@ -87,6 +87,35 @@ Two tools were evaluated and **not** included, on purpose:
 
 Full reasoning for both is in `references/tool-notes.md`.
 
+## Measured against labeled malicious skills
+
+The pipeline was run, unmodified, on a seeded random sample of
+[MalSkillBench](https://github.com/lxyeternal/MalSkillBench) (111
+malicious skills confirmed by runtime sandboxing or manual review, plus 64
+popular benign ones). Honest summary, with the numbers that don't flatter
+it:
+
+- **Using only the finding categories that behave like real signals**
+  (code execution, tool misuse, YARA, high-severity least-privilege and
+  exfiltration), tested on skills held out from picking them: **64%
+  recall at 9.4% false positives.** "Any finding at all" is a bad rule:
+  it flags 44% of benign skills.
+- **At realistic prevalence (about 2% of skills), that is roughly 12%
+  precision.** A flag means "read this skill", not "this is malicious".
+- **Weakest on prompt-injection-only skills (about 50% recall)**, since
+  static pattern matching is least effective when the payload is plain
+  language.
+- **Antivirus deleted 20 of the 111 malicious samples before they could be
+  scanned** (Windows Defender, the most blatant ones). The pipeline now
+  reports that as partial coverage instead of silently seeing a cleaner
+  tree. It also means the recall above is biased low.
+- Semgrep flagged 36% of malicious vs 3% of benign skills; gitleaks was
+  not useful for this (5% vs 3%).
+
+Caveats: one sample, mixed provenance (real-world and generated samples
+aren't separately labeled in the release), and a benign set of 64.
+Per-category tables and the full method are in `references/tool-notes.md`.
+
 ## Hostile-target hardening
 
 Several of these scanners read ignore and suppression settings from the

@@ -348,6 +348,25 @@ else
   record 3 semgrep skipped "not installed - pip install semgrep" ""
 fi
 
+# Staging integrity, checked at the END so it also catches removals that
+# happen during the scan. Found when scanning real malicious skills on a
+# Windows host: Defender deleted 20 of 111 sampled malicious skills'
+# files (the most blatant ones) and the pipeline just never saw them - no
+# error, no gap in the manifest, a cleaner tree than the real artifact.
+# `git ls-files --deleted` lists files git tracks that are gone from disk,
+# which covers git clones and local repos; zip and bare-directory targets
+# have no baseline to compare against and are not covered.
+if [[ -n "$DIR_TARGET" ]] && git -C "$DIR_TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  missing="$(git -C "$DIR_TARGET" ls-files --deleted -- . 2>/dev/null)"
+  nmiss="$(printf '%s\n' "$missing" | grep -c . || true)"
+  if [[ "$nmiss" -gt 0 ]]; then
+    sample="$(printf '%s\n' "$missing" | head -3 | paste -sd, -)"
+    record staging integrity partial "$nmiss tracked file(s) are missing from the scanned tree (antivirus removal, a failed checkout, or local deletions) - the scan covered an incomplete copy, so files that were removed were never analyzed. First: $sample" ""
+  else
+    record staging integrity ran "all git-tracked files present at end of scan" ""
+  fi
+fi
+
 {
   printf '{\n  "target": %s,\n  "tiers": [\n' "$("$PY" -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$TARGET")"
   for i in "${!entries[@]}"; do
