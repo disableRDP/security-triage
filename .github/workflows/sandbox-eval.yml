@@ -126,7 +126,7 @@ jobs:
           done
           sidecar="$(docker ps --format '{{.Names}}' | grep -i egress | head -1)"
           echo "sidecar container: ${sidecar:-NONE FOUND}"
-          [ -n "$sidecar" ] && docker exec "$sidecar" sh -c 'echo "-- nft --"; nft list ruleset 2>&1 | head -40; echo "-- iptables --"; iptables -S 2>&1 | head -20' || true
+          [ -n "$sidecar" ] && docker exec "$sidecar" sh -c 'echo "-- nft --"; nft list table inet gost_egress 2>&1; echo "-- processes --"; ps aux 2>&1 | head -12' || true
           main="$(docker ps --format '{{.Names}}' | grep main | head -1)"
           echo "== inside main =="; docker exec "$main" sh -c 'cat /proc/net/route; echo ---; cat /etc/resolv.conf' 2>&1 | head -14
           while pgrep -f "harbor run" >/dev/null; do sleep 3; done
