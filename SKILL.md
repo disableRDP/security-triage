@@ -78,7 +78,14 @@ applies; never guess which lens is "right" for the input.
    tool (e.g., discard SkillSpector findings entirely if the target has no
    `SKILL.md` anywhere — that is the exact misapplication that produced
    garbage output in testing). Do not present a raw tool score as if it
-   were a verdict.
+   were a verdict. For SkillSpector specifically, never quote its score,
+   severity label, or recommendation at all, even on a genuine skill
+   target, and report only findings that survive reading the flagged
+   line, deduplicated (the same pattern repeated across skills or links
+   is one observation). Its "analysis-evasion" findings are its own
+   coverage gaps, so they belong in the limitations, not the findings.
+   If a `--recursive` result shows `skills_omitted > 0` in the final
+   manifest, coverage was partial and the report must say so.
 
 6. **Write the synthesis.** Two parts, in this order — the first part is
    for a reader who has never seen this skill's internals and never will:
