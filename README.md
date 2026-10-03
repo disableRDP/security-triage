@@ -152,11 +152,21 @@ to be enabled, which sends usage metadata to semgrep.dev; set
 
 ## v2 roadmap (not built yet)
 
+**Sandbox evaluation done (2026-10-03):** Harbor is *not* the right layer
+for running a suspect's scripts. Its default `no-network` still resolves
+DNS and passes ICMP, its container is unhardened, and it fails open if its
+egress sidecar can't start; a plain `docker run --network none` wrapper is
+lighter and more clearly contained. Harbor remains the candidate for
+live-agent prompt-injection testing, which is untested. Method,
+containment table and caveats:
+[`evals/sandbox/README.md`](evals/sandbox/README.md). The paragraphs below
+are the original plan and predate that finding.
+
 v2 is scoped to **dynamic/behavioral sandbox execution** — the one
 category of attack (obfuscated/runtime-only payloads) static analysis
 structurally cannot see by construction. Candidate isolation layer:
-[Harbor](https://github.com/harbor-framework/harbor) (MIT, 5.7k stars,
-from the Terminal-Bench team) — evaluated directly by reading its source
+[Harbor](https://github.com/harbor-framework/harbor) (Apache-2.0, from the
+Terminal-Bench team) — evaluated directly by reading its source
 via NVIDIA's SkillEvaluator, which builds its own live-agent evaluation
 tier on top of it. SkillEvaluator's specific usage isn't reusable as-is
 (its task.toml generation hardcodes `network_mode = "public"` and its

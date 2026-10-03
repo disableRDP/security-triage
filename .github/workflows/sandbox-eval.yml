@@ -1,12 +1,10 @@
 name: sandbox-eval
 
-# Evaluation of dynamic (sandboxed) execution for a possible v2. Runs only on
-# the evaluation branch and on demand, never as part of master's CI.
+# Evaluation of dynamic (sandboxed) execution for a possible v2. Manual only;
+# never part of master's CI. See evals/sandbox/README.md for results.
 # Every sample is a harmless canary or an isolation probe: they touch only fake
 # credential files and 198.51.100.7 (TEST-NET-2, RFC 5737, never routable).
 on:
-  push:
-    branches: [sandbox-eval]
   workflow_dispatch:
 
 jobs:
