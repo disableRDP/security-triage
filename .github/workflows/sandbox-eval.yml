@@ -103,6 +103,39 @@ jobs:
           echo; echo "=== containment probe, Harbor no-network ==="
           cat /tmp/hjobs/*/probe-egress__*/verifier/probe.py.stdout 2>/dev/null || echo "(no probe stdout)"
 
+      - name: Harbor diagnostics - is egress control actually enforced?
+        run: |
+          python - <<'PY'
+          from harbor.environments.docker.docker import DockerEnvironment as D
+          print("kernel support check returns:", D._egress_control_kernel_support())
+          PY
+          docker run --rm alpine:3.23.4 sh -c 'ls -la /proc/config.gz 2>&1; echo "exit $?"' || true
+          mkdir -p /tmp/diag
+          bash evals/sandbox/harbor/make_task.sh evals/sandbox/samples/probe-egress /tmp/diag/probe
+          printf '#!/bin/bash
+/monitor/run_under_strace.sh /skill /tmp/strace 20
+sleep 45
+' > /tmp/diag/probe/solution/solve.sh
+          (harbor run -p /tmp/diag/probe -a oracle -e docker -o /tmp/diagjobs -y > /tmp/diag.log 2>&1 &)
+          for i in $(seq 1 60); do
+            sleep 3
+            docker ps --format '{{.Names}}' | grep -q main && break
+          done
+          sleep 20
+          echo "== containers =="; docker ps -a --format '{{.Names}} | {{.Image}} | {{.Status}}'
+          echo "== networks =="; docker network ls
+          for c in $(docker ps --format '{{.Names}}'); do
+            echo "== $c =="; docker inspect -f 'netmode={{.HostConfig.NetworkMode}} capadd={{.HostConfig.CapAdd}}' "$c"
+          done
+          sidecar="$(docker ps --format '{{.Names}}' | grep -i egress | head -1)"
+          echo "sidecar container: ${sidecar:-NONE FOUND}"
+          [ -n "$sidecar" ] && docker exec "$sidecar" sh -c 'echo "-- nft --"; nft list ruleset 2>&1 | head -40; echo "-- iptables --"; iptables -S 2>&1 | head -20' || true
+          main="$(docker ps --format '{{.Names}}' | grep main | head -1)"
+          echo "== inside main =="; docker exec "$main" sh -c 'cat /proc/net/route; echo ---; cat /etc/resolv.conf' 2>&1 | head -14
+          while pgrep -f "harbor run" >/dev/null; do sleep 3; done
+          echo "== harbor probe result =="; cat /tmp/diagjobs/*/probe-egress__*/verifier/probe.py.stdout 2>/dev/null || echo "(none)"
+          tail -5 /tmp/diag.log
+
       - name: Upload traces and Harbor jobs
         if: always()
         uses: actions/upload-artifact@v4
