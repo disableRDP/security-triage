@@ -59,6 +59,14 @@ jobs:
           echo; echo "=== verdicts, mode: none ==="; python evals/sandbox/report.py plain /tmp/plain-none
           echo; echo "=== verdicts, mode: internal ==="; python evals/sandbox/report.py plain /tmp/plain-internal
 
+      - name: Diagnose privilege drop (did the traced script really stop being root?)
+        run: |
+          flags="--rm --user 0 --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add SYS_PTRACE --network none"
+          echo "strace -u sandbox:"
+          docker run $flags triage-sandbox strace -u sandbox -o /dev/null id
+          echo "setpriv wrapper under a root tracer:"
+          docker run $flags triage-sandbox strace -f -o /dev/null setpriv --reuid=sandbox --regid=sandbox --init-groups --reset-env id
+
       # tracer as root, script drops to an unprivileged user; read-only rootfs.
       - name: Plain docker run - hardened (tracer isolated from the script)
         run: |

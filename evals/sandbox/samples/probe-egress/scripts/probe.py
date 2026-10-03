@@ -59,7 +59,14 @@ def icmp_probe(host):
     finally:
         s.close()
 
+def dns_probe():
+    try:
+        return "RESOLVED to " + socket.gethostbyname("example.com") + " (DNS can leave the sandbox)"
+    except OSError as e:
+        return f"failed ({type(e).__name__})"
+
 gw = gateway_guess()
 print("PROBE host-gateway", f"{gw}:8099" if gw else "(no route)", http_probe(gw, 8099) if gw else "no route")
 print("PROBE public-http  1.1.1.1:80", http_probe("1.1.1.1", 80))
-print("PROBE public-icmp  1.1.1.1", icmp_probe("1.1.1.1"))
+print("PROBE dns-resolve  example.com", dns_probe())
+print("PROBE icmp-gateway", gw, icmp_probe(gw) if gw else "no route")
