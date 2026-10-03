@@ -170,6 +170,33 @@ if have skillspector; then
         rc=$(run_capture "$f" "$e" -- skillspector scan "$root" --format json $recursive_flag $llm_flag)
         [[ "$rc" == "0" || "$rc" == "1" ]] && record 1 skillspector ran "root:$root recursive:${recursive_flag:-no} exit $rc" "$f" \
           || record 1 skillspector ran-with-errors "root:$root exit $rc, see $e" "$e"
+
+        # --recursive has a hardcoded 32-skill budget (_MULTI_SKILL_MAX_SKILLS
+        # in skillspector/cli.py, no flag or env override); everything past it
+        # is silently left unscanned. Found when 14 of 46 skills in a real
+        # monorepo came back as "aggregate_scan_limit" - not scanned at all,
+        # not just trimmed from the report. Scan whatever it skipped one at
+        # a time so a large collection never gets partial coverage reported
+        # as complete.
+        if [[ -n "$recursive_flag" && ( "$rc" == "0" || "$rc" == "1" ) ]]; then
+          scanned_names="$("$PY" - "$f" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+print("\n".join(s["name"] for s in d.get("skills", []) if "issues" in s and "name" in s))
+PY
+)"
+          xn=0
+          for other in "${real_skill_mds[@]}"; do
+            odir="$(dirname "$other")"
+            [[ "$(dirname "$odir")" == "$root" ]] || continue
+            grep -qxF "$(basename "$odir")" <<< "$scanned_names" && continue
+            xn=$((xn+1))
+            xf="$OUT/tier1_skillspector_${idx}_x${xn}.json"; xe="${xf%.json}.err"
+            xrc=$(run_capture "$xf" "$xe" -- skillspector scan "$odir" --format json $llm_flag)
+            [[ "$xrc" == "0" || "$xrc" == "1" ]] && record 1 skillspector ran "root:$odir recursive:no (past --recursive's 32-skill cap) exit $xrc" "$xf" \
+              || record 1 skillspector ran-with-errors "root:$odir exit $xrc, see $xe" "$xe"
+          done
+        fi
       done
     fi
   fi
