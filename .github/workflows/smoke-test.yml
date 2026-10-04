@@ -47,6 +47,10 @@ jobs:
           chmod +x "$RUNNER_TEMP/$dest"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
+      - name: Tier 5 domain-check tests (offline, fake feeds and fake RDAP)
+        shell: bash
+        run: python tests/test_domain_check.py
+
       - name: Syntax-check all scripts
         shell: bash
         run: |

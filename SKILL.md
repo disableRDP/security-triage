@@ -105,6 +105,32 @@ applies; never guess which lens is "right" for the input.
    from the scanned tree (often antivirus), so some of the artifact was
    never analyzed; say that plainly.
 
+   **Tier 4 (`sandbox-exec`, only present when the user set
+   `TRIAGE_EXECUTE=1`).** Its per-script `clean/review/high` describes what
+   the script *attempted* when run once with no arguments and no network.
+   `clean` is never evidence of safety (a payload gated on arguments, time
+   or a network interface is invisible; that is a measured limit, not a
+   guess), so do not let it soften a static finding. A `high` or `review`
+   script means "read that script", and corroborates a static finding on
+   the same file. `skipped` means nothing was run (say so, with the reason
+   in the manifest); `REFUSED` (status `ran-with-errors`) means the
+   containment check failed and **nothing was executed**: report dynamic
+   coverage as absent, not as clean. Executed files and gaps are named in
+   the entry's detail; repeat any gap that matters.
+
+   **Tier 5 (`domain-reputation`).** A `known-bad-host/url/ip` match comes
+   from abuse.ch feeds of current malware infrastructure: read the line it
+   points to first (is it a download, a fetch at install time, or just a
+   comment or test fixture?). A URLhaus match on a literal IP or exact URL
+   is a strong signal and can lead Part 1 if the reference is live code. A
+   ThreatFox match marked COMPROMISED means a legitimate site was hacked, so
+   the domain itself may be innocent: weaker, say that. `newly-registered`
+   is weak alone (new projects have new domains): mention it only next to
+   another signal, or in Part 2. Not being listed proves little (the feeds
+   hold current/recent entries only), and `skipped` or `partial` means some
+   domains were NOT checked: say that, never "no bad domains". Never contact
+   a domain from the target yourself to check it.
+
 6. **Write the synthesis.** Two parts, in this order — the first part is
    for a reader who has never seen this skill's internals and never will:
 
@@ -135,6 +161,15 @@ applies; never guess which lens is "right" for the input.
      runtime, does not detect an already-approved artifact changing
      later (no drift/rug-pull detection), and does not adversarially test
      prompt-injection resistance beyond static pattern matching."*
+
+     If the manifest shows `sandbox-exec` with status `ran` or `partial`,
+     use instead this line, because the first one would then be false:
+     *"This triage was mostly static; the only code it ran was the skill's
+     own scripts, once, with no arguments and no network, so it cannot
+     catch payloads gated on arguments, time or network access, does not
+     detect an already-approved artifact changing later (no drift/rug-pull
+     detection), and does not adversarially test prompt-injection
+     resistance beyond static pattern matching."*
 
    A reader should be able to stop after Part 1 and walk away with the
    right answer. Part 2 exists for someone who wants to check your work,

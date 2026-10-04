@@ -373,6 +373,26 @@ else
   fi
 fi
 
+echo "== Tier 5: domain reputation ==" >&2
+
+# Static only: extracts hosts from URLs in the target and matches them against
+# locally cached abuse.ch feeds; never contacts a domain found in the target.
+# Network is opt-in (TRIAGE_DOMAIN_LOOKUP=1: feed refresh + RDAP domain age),
+# because it tells third parties which domains the target mentions. With no
+# cached feeds the entry is `skipped`, not clean. A match corroborates other
+# findings, it is not a verdict (see references/tool-notes.md).
+if [[ -z "$DIR_TARGET" ]]; then
+  record 5 domain-reputation skipped "no local files for a bare registry reference" ""
+else
+  dres="$OUT/tier5_domains.json"
+  if "$PY" "$(dirname "$0")/domain_check.py" "$DIR_TARGET" "$dres" 2>"$OUT/tier5_domains.err" && [[ -f "$dres" ]]; then
+    dfield() { "$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$dres" "$1"; }
+    record 5 domain-reputation "$(dfield status)" "$(dfield detail)" "$dres"
+  else
+    record 5 domain-reputation ran-with-errors "domain_check.py failed, see $OUT/tier5_domains.err" "$OUT/tier5_domains.err"
+  fi
+fi
+
 # Staging integrity, checked at the END so it also catches removals that
 # happen during the scan. Found when scanning real malicious skills on a
 # Windows host: Defender deleted 20 of 111 sampled malicious skills'

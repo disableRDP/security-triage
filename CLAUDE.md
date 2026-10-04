@@ -28,8 +28,9 @@ toolchain) — it's skipped gracefully, not broken. Tier 4 (opt-in, `TRIAGE_EXEC
 scripts via `scripts/sandbox_run.sh`, a `--network none` wrapper with a
 refuse-if-uncontained probe; verified only by the `sandbox-exec` CI workflow
 (no Docker locally). `evals/sandbox/README.md` holds the evaluation (Harbor
-only for live-agent prompt-injection testing, untested). Drift detection, SBOM and license
-checks remain out of scope.
+only for live-agent prompt-injection testing, untested). Tier 5 (`scripts/domain_check.py`) matches URL hosts against cached abuse.ch
+feeds; network (feed refresh, RDAP age) is opt-in via `TRIAGE_DOMAIN_LOOKUP=1`.
+Drift detection, SBOM and license checks remain out of scope.
 
 ## Working conventions
 
@@ -84,4 +85,5 @@ pip install guarddog   # needs a Rust/Cargo toolchain first - not installed here
 - `SKILL.md` — the actual skill definition Claude Code loads when invoked
 - `.github/workflows/smoke-test.yml` — CI
 - `.github/workflows/sandbox-eval.yml` — manual-only sandbox evaluation
+- `tests/test_domain_check.py` — offline tests for tier 5 (fake feeds + fake RDAP)
 - `.github/workflows/sandbox-exec.yml` — acceptance test for tier 4 (`scripts/sandbox_run.sh`)

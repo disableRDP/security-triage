@@ -377,3 +377,25 @@ different things (secrets, CVEs, skill-contract risk, package behavior,
 code patterns) and forcing one number onto all of them is exactly what
 produced the meaningless 100/100 CRITICAL result that motivated this
 pipeline's layered design in the first place.
+
+## Domain reputation (tier 5)
+
+- **What a match is.** URLhaus lists hosts/URLs currently serving malware; a
+  literal IP or an exact URL match is a strong signal. ThreatFox is different:
+  on 2026-10-04, 1,210 of its 1,371 recent domain IOCs (88%) were marked
+  `is_compromised`, meaning a legitimate site that was hacked. The finding
+  says so; weigh it accordingly.
+- **Host-level matching is deliberately narrow.** The URLhaus online list
+  contains 5,287 `raw.githubusercontent.com` URLs and 883 `github.com` ones,
+  so host-level matching there would flag every GitHub reference. Only exact
+  URLs (and IP literals) match. ThreatFox also lists whole
+  `*.workers.dev` subdomains; those match by exact name.
+- **Absence is weak evidence.** The feeds hold current/recent entries; a
+  domain that distributed malware last year is not in them.
+- **`newly-registered` is weak alone.** It needs a second signal.
+- **Domain age is not evaluable** for shared-hosting subdomains and IPs, and
+  the registrable-domain guess uses a short built-in list of two-label
+  suffixes (not the Public Suffix List), so an odd TLD can produce an RDAP
+  404, reported as a coverage gap, not clean.
+- Measured false positives: 0 matches over 1,091 domains in 10,914 benign
+  files. Recall against real malicious code is untested.

@@ -35,6 +35,8 @@ whole report on the answer.
 | 1 | [SkillSpector](https://github.com/NVIDIA/skillspector) | Claude Code skills, MCP servers, agent configs | Skipped entirely with no `SKILL.md`/MCP manifest anywhere (its output is discarded by rule otherwise); scoped to the actual skills-collection directory with `--recursive` when a monorepo bundles several — measured 10min → 35sec on a real 46-skill repo rather than scanning the whole tree |
 | 2 | [GuardDog](https://github.com/DataDog/guarddog) | registry packages (npm/PyPI/Go/RubyGems/Cargo/GH Actions) | Runs per detected manifest, not a global guess |
 | 3 | [Semgrep](https://github.com/semgrep/semgrep) `--config auto` | general source code | No skill/app assumptions to misapply |
+| 4 | sandboxed script execution (opt-in) | skill `scripts/*.py`, `scripts/*.sh` | Only tier that runs target code; see below |
+| 5 | domain reputation (abuse.ch URLhaus + ThreatFox, RDAP age) | every URL in any text file | Exact-match lookups, no semantic assumptions; network opt-in; see below |
 
 Staging (local dir, git URL, zip, or registry reference) never executes
 install/build/postinstall scripts — it only fetches or extracts.
@@ -167,6 +169,32 @@ only adds coverage: an argument- or time-gated payload is invisible to it, so
 it never replaces the static tiers. Verified by the `sandbox-exec` workflow
 (needs Docker; the author's machine has none), which includes tests that
 deliberately weaken the sandbox and require a refusal.
+
+## Tier 5: domain reputation (2026-10-04)
+
+`scripts/domain_check.py` extracts the host of every `http(s)/ws(s)/ftp` URL
+in the target's text files (userinfo handled: `http://github.com@evil.com/`
+is `evil.com`; placeholders, loopback, private and reserved hosts ignored)
+and checks them against locally cached, unauthenticated abuse.ch feeds: the
+URLhaus host file (host match), URLhaus online URLs (exact URL, or a literal
+IP), and ThreatFox domains (the IOC or a subdomain of it, never its parent).
+A URLhaus URL on a shared host such as `raw.githubusercontent.com` matches
+only on the exact URL, never the whole host. The matcher never contacts a
+domain found in the target.
+
+Network is **opt-in**: with no cached feeds the tier is `skipped` ("N domains
+extracted but NOT checked"), never clean. `TRIAGE_DOMAIN_LOOKUP=1` downloads/
+refreshes the feeds (cache: `~/.cache/security-triage/feeds`, or
+`TRIAGE_FEED_DIR`) and also asks RDAP for each registrable domain's
+registration date, flagging domains under `TRIAGE_DOMAIN_NEW_DAYS` (30) old.
+RDAP tells the registries which domains the target mentions, which is why it
+is opt-in. Domains on shared hosting (`github.io`, `workers.dev`, ...),
+well-known domains and IP literals are not age-checked and are counted as
+such. Stale or missing feeds, files over 5 MB, an RDAP failure or the
+`TRIAGE_DOMAIN_MAX` (40) lookup cap make the tier `partial`. Measured
+2026-10-04: 1,091 domains in 10,914 benign files (a Python
+`site-packages`) gave 0 matches in 44 s. That says nothing about recall on
+real malicious code. Offline tests: `python tests/test_domain_check.py`.
 
 ## v2 roadmap (script execution built; the rest not)
 
