@@ -264,15 +264,18 @@ if have skillspector; then
       # flag is for. This is what actually fixes the runtime problem for
       # monorepos - the earlier whole-repo-or-nothing gate above only
       # helped the zero-SKILL.md case, not this one.
-      declare -A roots_seen
-      # How many SKILL.md files share each collection root, counted once with
-      # parameter expansion. The previous per-skill rescan forked `dirname`
-      # twice per PAIR of skills (70 skills = ~9800 forks, minutes on Windows)
-      # for what is a single pass.
-      declare -A root_count
+      # No associative arrays here: macOS ships bash 3.2, where `declare -A`
+      # fails, and with it this whole branch silently never ran (no SkillSpector
+      # entry in the manifest at all). Newline-delimited strings work everywhere.
+      roots_seen=$'\n'
+      # The collection root of every SKILL.md, one per line; a root's line count
+      # is how many skills share it. Built with parameter expansion in one pass:
+      # the previous per-skill rescan forked `dirname` twice per PAIR of skills
+      # (70 skills = ~9800 forks, minutes on Windows).
+      all_roots=""
       for skill_md in "${real_skill_mds[@]}"; do
-        sd="${skill_md%/*}"; cr="${sd%/*}"
-        root_count[$cr]=$(( ${root_count[$cr]:-0} + 1 ))
+        sd="${skill_md%/*}"
+        all_roots+="${sd%/*}"$'\n'
       done
       idx=0
       for skill_md in "${real_skill_mds[@]}"; do
@@ -281,14 +284,14 @@ if have skillspector; then
         # If this SKILL.md is the only one under its collection_root,
         # scan its own directory directly instead (handles the common
         # single-skill-repo case correctly).
-        siblings="${root_count[$collection_root]:-0}"
+        siblings="$(printf '%s' "$all_roots" | grep -cxF -- "$collection_root" || true)"
         if [[ $siblings -le 1 ]]; then
           root="$skill_dir"; recursive_flag=""
         else
           root="$collection_root"; recursive_flag="--recursive"
         fi
-        [[ -n "${roots_seen[$root]:-}" ]] && continue
-        roots_seen[$root]=1
+        case "$roots_seen" in *$'\n'"$root"$'\n'*) continue ;; esac
+        roots_seen+="$root"$'\n'
         idx=$((idx+1))
         f="$OUT/tier1_skillspector_${idx}.json"; e="${f%.json}.err"
         rc=$(run_capture "$f" "$e" -- skillspector scan "$root" --format json $recursive_flag $llm_flag)
