@@ -112,6 +112,7 @@ for _ in $(seq 1 50); do [[ -s "$python_listener_port" ]] && break; sleep 0.1; d
 PROBE_PORT="$(cat "$python_listener_port" 2>/dev/null || true)"
 
 # Identical for the probe and for the scripts. Only the command differs.
+# (setpriv --reset-env wipes the container env, so the probe's port is passed after `env` in $DROP.)
 sandbox_flags=(
   --user 0 --network none
   --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add SYS_PTRACE
@@ -148,7 +149,7 @@ for s in "${SKILLS[@]}"; do
 
   # 1. containment probe, same flags, same user the scripts will run as
   rc="$(docker_timed 60 "triage-sbx-$$-probe$n" "$d/probe.json" "$d/probe.err" -- \
-        "${sandbox_flags[@]}" -e "PROBE_HOST_PORT=$PROBE_PORT" "$TAG" $DROP python3 /monitor/containment_probe.py)"
+        "${sandbox_flags[@]}" "$TAG" $DROP "PROBE_HOST_PORT=$PROBE_PORT" python3 /monitor/containment_probe.py)"
   if [[ "$rc" != "0" ]]; then
     failed="$("$PY" -c '
 import json, sys
