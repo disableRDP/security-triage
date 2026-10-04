@@ -24,9 +24,11 @@ v1 complete: a layered static-analysis pipeline (gitleaks + osv-scanner,
 SkillSpector, GuardDog, Semgrep — see README's tier table). CI (GitHub
 Actions, `.github/workflows/smoke-test.yml`) passes on ubuntu/macos/windows.
 GuardDog is wired in but not installed locally (needs a Rust/Cargo
-toolchain) — it's skipped gracefully, not broken. v2 (dynamic sandbox
-execution, drift detection, prompt-injection fuzzing, SBOM, license checks)
-is scoped in README but not started.
+toolchain) — it's skipped gracefully, not broken. v2 dynamic execution is
+*evaluated, not built*: `evals/sandbox/README.md` holds the findings (use a
+`--network none` wrapper, not Harbor; Harbor only for live-agent
+prompt-injection testing, untested). Drift detection, SBOM and license
+checks remain out of scope.
 
 ## Working conventions
 
@@ -45,6 +47,18 @@ is scoped in README but not started.
   found in this project so far (a wrong CLI flag, a misclassified exit
   code, a CI action that couldn't match an asset) was caught by actually
   executing the thing, never by inspecting it. Don't skip that step.
+- **Check what a probe actually measures.** A completed TCP handshake is
+  not reachability (Harbor's egress sidecar completes handshakes locally);
+  require a real response before claiming something is open or closed.
+- **A tier that reports `ran` can still be partial.** Scanners also read
+  ignore/suppression config from the target, so always pass explicit
+  target-independent settings.
+- **Never run real malware samples** (sandbox or not) without the user's
+  explicit approval. Sandbox canaries use only fake credentials and
+  198.51.100.7. No Docker locally; sandbox runs go through the manual
+  `sandbox-eval` workflow on GitHub's runner.
+- Write large files with the Write tool, not bash heredocs, and validate
+  workflow YAML before pushing (a step name containing `: ` breaks it).
 - Commit directly to `master` — solo project, no PR ritual needed.
 - No real secrets, credentials, or live API keys in this repo — it's
   public, and it's a security tool besides.
@@ -65,5 +79,7 @@ pip install guarddog   # needs a Rust/Cargo toolchain first - not installed here
 
 - `README.md` — design rationale, tier table, v1/v2 roadmap, install/usage
 - `references/tool-notes.md` — per-tool false-positive calibration rules
+- `evals/sandbox/README.md` — Harbor/sandbox evaluation results (research)
 - `SKILL.md` — the actual skill definition Claude Code loads when invoked
 - `.github/workflows/smoke-test.yml` — CI
+- `.github/workflows/sandbox-eval.yml` — manual-only sandbox evaluation
