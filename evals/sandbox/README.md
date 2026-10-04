@@ -49,8 +49,13 @@ handshake as reachability. The corrected finding is the table above.
 Caveats that matter: these canaries test the *mechanism*, not malware recall.
 The analyzer's rules were written after seeing these samples, so detecting
 them is not an independent result (the environment-probe rule was added after
-seeing `evasive-netgated`). Hostnames in raw Python sockets are invisible
-(only the DNS connect shows); `curl`/`wget` hostnames are visible via argv.
+seeing `evasive-netgated`, and the DNS-question decoder after `evasive-rawdns`).
+`curl`/`wget` hostnames are visible via argv. Hostnames in raw sockets are
+decoded from the DNS question in `sendto`/`send`/`write` buffers (`dns-query`
+ioc). Writing that sample also exposed a gap: a UDP `sendto()` with an explicit
+destination never calls `connect()`, so it was not counted as external at all;
+it now is. Decoding covers plain DNS-over-UDP/TCP questions only: not DoH/DoT,
+not names split across several packets, not an answer-section channel.
 
 ### 3. The tracer can be tampered with
 
@@ -58,8 +63,16 @@ A script running as the same uid as the tracer can truncate its own trace
 (observed: ~20 KB of NUL bytes). The fix, verified end to end: the tracer
 stays root and the script is dropped to an unprivileged user with
 `setpriv --reuid ... --reset-env` (`RUN_AS=sandbox` in
-`monitor/run_under_strace.sh`). `strace -u` was *not* relied on; why it
-behaved differently is unresolved.
+`monitor/run_under_strace.sh`). `strace -u` was not relied on at first because
+an earlier run seemed to show it failing. **Re-tested 2026-10-04**
+(`monitor/strace_u_diag.sh`, strace 6.13, root tracer, caps SETUID/SETGID/
+SYS_PTRACE): `strace -u sandbox` and the `setpriv` drop behave identically.
+Both give the tracee uid/gid 1000 with `CapEff=0`, both leave the root-owned
+trace intact (truncate refused, 0 NUL bytes), while a plain root tracee
+truncates it (103944 NUL bytes). So `-u` does protect the trace when the tracer
+is root; the earlier observation is unexplained (most likely that run's tracer
+was not root, but that was not reconstructed). Tier 4 keeps `setpriv`: it also
+resets the environment and supplementary groups explicitly.
 
 ### 4. Harbor itself
 
@@ -90,7 +103,11 @@ behaved differently is unresolved.
 
 ## Open items
 
-DNS-qname decoding (to see hostnames in raw sockets); an ICMP test against a
-responding target (the bridge control to 1.1.1.1 got no reply, so it was
-inconclusive); a sinkhole resolver; the `strace -u` puzzle; and the
+A sinkhole resolver (to observe lookups that actually get answered); the
 prompt-injection fuzzing half of the question, which needs a live agent.
+Resolved 2026-10-04: DNS-qname decoding (above), the `strace -u` puzzle
+(above), and the ICMP row: with a bridge network the probe's ICMP check gets
+an echo reply from the host/gateway (the public 1.1.1.1 target never answered
+on the runner, which is why the earlier row was inconclusive), and CI requires
+that check to fail on the deliberately weakened sandbox, so the ICMP method is
+positively controlled.
