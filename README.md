@@ -170,6 +170,35 @@ it never replaces the static tiers. Verified by the `sandbox-exec` workflow
 (needs Docker; the author's machine has none), which includes tests that
 deliberately weaken the sandbox and require a refusal.
 
+## Staging and scale hardening (2026-10-04)
+
+- **Past the 32-skill cap.** SkillSpector's `--recursive` stops at 32 skills.
+  The remainder is now scanned in copies of at most 32 skills per call, and
+  any skill a batch does not report is scanned alone, so coverage is never
+  assumed. On 70 synthetic skills (7 with planted findings) the full run went
+  from 10m18s to 1m02s with identical findings (42 of 42, 0 differences).
+  Part of that gain is not batching at all: a per-skill sibling check forked
+  `dirname` for every pair of skills (about 9,800 forks for 70), which cost
+  minutes on Windows and is now one pass. A fake-`skillspector` test
+  (`tests/test_batching.py`) covers the control flow in CI.
+- **Integrity baselines for zips and directories.** `staging/integrity` used
+  to cover only git targets. A zip now records what it extracted
+  (`<dir>.expected`) and a bare directory is listed when the scan starts; a
+  file that vanishes afterwards (antivirus) makes the entry `partial`. A
+  directory has no earlier baseline, so files removed before the scan are not
+  detectable, and the entry says so.
+- **Zip size cap.** A zip declaring more than 2 GB or 100,000 files is refused
+  before extraction (`TRIAGE_ZIP_MAX_BYTES`, `TRIAGE_ZIP_MAX_FILES`).
+- **Opt-in git history.** The default scan is a depth-1 clone with `--no-git`,
+  so a secret committed and later removed is invisible.
+  `TRIAGE_CLONE_DEPTH=full` (staging) plus `TRIAGE_GIT_HISTORY=1` (triage) adds
+  a `gitleaks-history` entry. It is `partial` on a shallow clone. It runs `git`
+  against the target's `.git`, and a hostile `.git/config` (for example a
+  `diff.<x>.textconv` driver, verified to execute during `git log -p`) can run
+  programs, so history is scanned only when `.git/config` holds nothing beyond
+  a fresh clone's keys; otherwise it is refused and says so.
+  Tests: `tests/test_integrity_history.py`.
+
 ## Tier 5: domain reputation (2026-10-04)
 
 `scripts/domain_check.py` extracts the host of every `http(s)/ws(s)/ftp` URL

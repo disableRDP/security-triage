@@ -23,6 +23,11 @@ if [[ -z "$TARGET" || -z "$OUT" ]]; then
   exit 1
 fi
 mkdir -p "$OUT"
+# File list of a bare directory target, taken before any tool runs (see the
+# integrity check at the end of this script).
+if [[ "$TARGET" != REGISTRY:* && -d "$TARGET" ]]; then
+  (cd "$TARGET" && find . -type f -not -path './.git/*' | sed 's|^\./||' | LC_ALL=C sort -u) > "$OUT/.integrity-start.txt"
+fi
 
 # Scanner config that lives OUTSIDE the target. Several scanners read
 # suppression/ignore settings from the directory being scanned, which lets a
@@ -120,6 +125,54 @@ else
   record 0 gitleaks skipped "gitleaks not installed - see https://github.com/gitleaks/gitleaks for install" ""
 fi
 
+# Opt-in: scan git HISTORY for secrets that were committed and later removed
+# (invisible to the --no-git scan above). Off by default because a full clone
+# costs time and disk, and because it runs `git` against the target's .git:
+# a .git/config from an untrusted source (zip, copied directory) can make git run
+# commands (e.g. a diff.<x>.textconv driver during `git log -p`). So history is
+# only scanned when .git/config holds nothing beyond a short allowlist of keys,
+# which a fresh clone always satisfies; anything else is refused, not scanned.
+git_config_unsafe() {
+  local line key bad=()
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    case "$key" in
+      core.repositoryformatversion|core.filemode|core.bare|core.logallrefupdates|core.ignorecase|core.precomposeunicode|core.symlinks) ;;
+      remote.*.url|remote.*.fetch|remote.*.tagopt|branch.*.remote|branch.*.merge|user.name|user.email|init.defaultbranch) ;;
+      *) bad+=("$key") ;;
+    esac
+  done < <(git config --file "$1/config" --list 2>/dev/null)
+  [[ ${#bad[@]} -gt 0 ]] && printf '%s, ' "${bad[@]:0:5}"
+}
+if [[ "${TRIAGE_GIT_HISTORY:-0}" == "1" ]]; then
+  if [[ -z "$DIR_TARGET" ]]; then
+    record 0 gitleaks-history skipped "registry references have no git history" ""
+  elif ! have gitleaks; then
+    record 0 gitleaks-history skipped "gitleaks not installed" ""
+  elif [[ ! -d "$DIR_TARGET/.git" ]]; then
+    record 0 gitleaks-history skipped "TRIAGE_GIT_HISTORY=1 but the target has no .git directory (a zip, a bare directory, or a worktree/submodule gitfile), so there is no history to scan" ""
+  elif [[ -n "$(git_config_unsafe "$DIR_TARGET/.git")" ]]; then
+    record 0 gitleaks-history skipped "REFUSED to run git on this repository: .git/config has settings beyond a fresh clone's ($(git_config_unsafe "$DIR_TARGET/.git")) and such settings can make git execute programs. History was NOT scanned; re-stage it as a fresh clone (stage.sh with a git URL) to scan history" ""
+  else
+    f="$OUT/tier0_gitleaks_history.json"; e="$OUT/tier0_gitleaks_history.err"
+    ncommits="$(git -C "$DIR_TARGET" rev-list --count --all 2>/dev/null || echo "?")"
+    shallow="$(git -C "$DIR_TARGET" rev-parse --is-shallow-repository 2>/dev/null || echo false)"
+    # No global/system git config either: only the (allowlisted) repo config applies.
+    rc=$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0 \
+      run_capture "$f" "$e" -- gitleaks detect -s "$DIR_TARGET" -f json -r "$f" \
+      --config "$CFG/gitleaks-default.toml" --gitleaks-ignore-path "$CFG/empty" --ignore-gitleaks-allow)
+    if [[ "$rc" == "0" || "$rc" == "1" ]]; then
+      if [[ "$shallow" == "true" ]]; then
+        record 0 gitleaks-history partial "only $ncommits commit(s) of history exist in this shallow clone, so secrets removed in earlier commits are NOT covered (stage with TRIAGE_CLONE_DEPTH=full); exit $rc (1 = leaks found)" "$f"
+      else
+        record 0 gitleaks-history ran "scanned $ncommits commit(s) across all refs; exit $rc (1 = leaks found, expected)" "$f"
+      fi
+    else
+      record 0 gitleaks-history ran-with-errors "exit $rc, see $e" "$e"
+    fi
+  fi
+fi
+
 if have osv-scanner; then
   f="$OUT/tier0_osv.json"; e="$OUT/tier0_osv.err"
   if [[ -n "$DIR_TARGET" ]]; then
@@ -212,17 +265,23 @@ if have skillspector; then
       # monorepos - the earlier whole-repo-or-nothing gate above only
       # helped the zero-SKILL.md case, not this one.
       declare -A roots_seen
+      # How many SKILL.md files share each collection root, counted once with
+      # parameter expansion. The previous per-skill rescan forked `dirname`
+      # twice per PAIR of skills (70 skills = ~9800 forks, minutes on Windows)
+      # for what is a single pass.
+      declare -A root_count
+      for skill_md in "${real_skill_mds[@]}"; do
+        sd="${skill_md%/*}"; cr="${sd%/*}"
+        root_count[$cr]=$(( ${root_count[$cr]:-0} + 1 ))
+      done
       idx=0
       for skill_md in "${real_skill_mds[@]}"; do
-        skill_dir="$(dirname "$skill_md")"
-        collection_root="$(dirname "$skill_dir")"
+        skill_dir="${skill_md%/*}"
+        collection_root="${skill_dir%/*}"
         # If this SKILL.md is the only one under its collection_root,
         # scan its own directory directly instead (handles the common
         # single-skill-repo case correctly).
-        siblings=0
-        for other in "${real_skill_mds[@]}"; do
-          [[ "$(dirname "$(dirname "$other")")" == "$collection_root" ]] && siblings=$((siblings+1))
-        done
+        siblings="${root_count[$collection_root]:-0}"
         if [[ $siblings -le 1 ]]; then
           root="$skill_dir"; recursive_flag=""
         else
@@ -256,20 +315,54 @@ d = json.load(open(sys.argv[1], encoding="utf-8"))
 print("\n".join(s["name"] for s in d.get("skills", []) if "issues" in s and "name" in s))
 PY
 )"
-          xn=0
+          # The remainder is scanned in copies of <=32 skills at a time (the
+          # cap applies per --recursive call, so each batch is complete);
+          # measured on 70 synthetic skills the one-skill-at-a-time fallback
+          # took 10m18s. Copies, not symlinks (not followed on Windows). A
+          # skill that a batch still does not report is scanned alone, so
+          # coverage is never assumed. Skills are scanned in their own
+          # directory either way, so results do not depend on batching.
+          remaining=()
           for other in "${real_skill_mds[@]}"; do
             odir="$(dirname "$other")"
             [[ "$(dirname "$odir")" == "$root" ]] || continue
             grep -qxF "$(basename "$odir")" <<< "$scanned_names" && continue
-            xn=$((xn+1))
-            xf="$OUT/tier1_skillspector_${idx}_x${xn}.json"; xe="${xf%.json}.err"
-            xrc=$(run_capture "$xf" "$xe" -- skillspector scan "$odir" --format json $llm_flag)
-            if [[ "$xrc" == "0" || "$xrc" == "1" ]]; then
-              xcov="$(ss_coverage "$xf")"
-              record 1 skillspector "${xcov%%|*}" "root:$odir recursive:no (past --recursive's 32-skill cap) exit $xrc; ${xcov#*|}" "$xf"
+            remaining+=("$odir")
+          done
+          bn=0; xn=0
+          for ((bi = 0; bi < ${#remaining[@]}; bi += 32)); do
+            bn=$((bn+1))
+            bdir="$OUT/.batches/${idx}_$bn"; mkdir -p "$bdir"
+            batch=("${remaining[@]:bi:32}")
+            for odir in "${batch[@]}"; do cp -R "$odir" "$bdir/$(basename "$odir")"; done
+            bf="$OUT/tier1_skillspector_${idx}_b${bn}.json"; be="${bf%.json}.err"
+            brc=$(run_capture "$bf" "$be" -- skillspector scan "$bdir" --format json --recursive $llm_flag)
+            bscanned=""
+            if [[ "$brc" == "0" || "$brc" == "1" ]]; then
+              bcov="$(ss_coverage "$bf" 1)"
+              record 1 skillspector "${bcov%%|*}" "root:$root batch $bn (${#batch[@]} skills, recursive, past the 32-skill cap) exit $brc; ${bcov#*|}" "$bf"
+              bscanned="$("$PY" - "$bf" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+print("\n".join(s["name"] for s in d.get("skills", []) if "issues" in s and "name" in s))
+PY
+)"
             else
-              record 1 skillspector ran-with-errors "root:$odir exit $xrc, see $xe" "$xe"
+              record 1 skillspector ran-with-errors "root:$root batch $bn exit $brc, see $be; its skills are scanned one at a time" "$be"
             fi
+            for odir in "${batch[@]}"; do
+              grep -qxF "$(basename "$odir")" <<< "$bscanned" && continue
+              xn=$((xn+1))
+              xf="$OUT/tier1_skillspector_${idx}_x${xn}.json"; xe="${xf%.json}.err"
+              xrc=$(run_capture "$xf" "$xe" -- skillspector scan "$odir" --format json $llm_flag)
+              if [[ "$xrc" == "0" || "$xrc" == "1" ]]; then
+                xcov="$(ss_coverage "$xf")"
+                record 1 skillspector "${xcov%%|*}" "root:$odir recursive:no (not reported by its batch) exit $xrc; ${xcov#*|}" "$xf"
+              else
+                record 1 skillspector ran-with-errors "root:$odir exit $xrc, see $xe" "$xe"
+              fi
+            done
+            rm -rf "$bdir"
           done
         fi
       done
@@ -401,6 +494,12 @@ fi
 # `git ls-files --deleted` lists files git tracks that are gone from disk,
 # which covers git clones and local repos; zip and bare-directory targets
 # have no baseline to compare against and are not covered.
+#
+# Zip and bare-directory targets now have baselines too: stage.sh records the
+# extracted file list next to a zip ("<dir>.expected"), and a bare directory is
+# listed when this script starts. A directory baseline only catches removals
+# DURING the scan; a file deleted before triage started was never seen, and the
+# entry says so instead of implying a full guarantee.
 if [[ -n "$DIR_TARGET" ]] && git -C "$DIR_TARGET" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   missing="$(git -C "$DIR_TARGET" ls-files --deleted -- . 2>/dev/null)"
   nmiss="$(printf '%s\n' "$missing" | grep -c . || true)"
@@ -409,6 +508,25 @@ if [[ -n "$DIR_TARGET" ]] && git -C "$DIR_TARGET" rev-parse --is-inside-work-tre
     record staging integrity partial "$nmiss tracked file(s) are missing from the scanned tree (antivirus removal, a failed checkout, or local deletions) - the scan covered an incomplete copy, so files that were removed were never analyzed. First: $sample" ""
   else
     record staging integrity ran "all git-tracked files present at end of scan" ""
+  fi
+elif [[ -n "$DIR_TARGET" ]]; then
+  baseline=""; basis=""
+  if [[ -f "${DIR_TARGET%/}.expected" ]]; then
+    baseline="${DIR_TARGET%/}.expected"; basis="every file extracted from the zip"
+  elif [[ -f "$OUT/.integrity-start.txt" ]]; then
+    baseline="$OUT/.integrity-start.txt"; basis="every file present when the scan started (a directory has no earlier baseline, so files removed BEFORE the scan are not detectable)"
+  fi
+  if [[ -n "$baseline" ]]; then
+    tr -d '\015' < "$baseline" | LC_ALL=C sort -u > "$OUT/.integrity-expected.txt"
+    (cd "$DIR_TARGET" && find . -type f -not -path './.git/*' | sed 's|^\./||' | LC_ALL=C sort -u) > "$OUT/.integrity-now.txt"
+    missing="$(LC_ALL=C comm -23 "$OUT/.integrity-expected.txt" "$OUT/.integrity-now.txt")"
+    nmiss="$(printf '%s\n' "$missing" | grep -c . || true)"
+    if [[ "$nmiss" -gt 0 ]]; then
+      sample="$(printf '%s\n' "$missing" | head -3 | paste -sd, -)"
+      record staging integrity partial "$nmiss file(s) were present at the start and are gone at the end of the scan (antivirus removal or deletion) - the scan covered an incomplete copy, so the removed files were never fully analyzed. First: $sample" ""
+    else
+      record staging integrity ran "$basis: all still present at end of scan" ""
+    fi
   fi
 fi
 

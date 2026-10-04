@@ -104,6 +104,13 @@ applies; never guess which lens is "right" for the input.
    A `staging/integrity` entry marked `partial` means files were removed
    from the scanned tree (often antivirus), so some of the artifact was
    never analyzed; say that plainly.
+   A `gitleaks-history` entry (only with `TRIAGE_GIT_HISTORY=1`) scans past
+   commits: a hit there is a real credential even though it was removed
+   from the current files, so say it should be treated as compromised
+   (rotated), not as fixed. `partial` there means a shallow clone, so older
+   commits were NOT checked; `skipped` with REFUSED means the repository's
+   own git settings were unsafe to run and no history was scanned. Report
+   those as absent coverage, never as "no secrets in history".
 
    **Tier 4 (`sandbox-exec`, only present when the user set
    `TRIAGE_EXECUTE=1`).** Its per-script `clean/review/high` describes what

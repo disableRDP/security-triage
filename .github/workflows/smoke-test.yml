@@ -51,6 +51,14 @@ jobs:
         shell: bash
         run: python tests/test_domain_check.py
 
+      - name: Batching test (fake skillspector reproducing the 32-skill cap)
+        shell: bash
+        run: python tests/test_batching.py
+
+      - name: Integrity baselines and opt-in git history (real stage.sh and triage.sh)
+        shell: bash
+        run: python tests/test_integrity_history.py
+
       - name: Syntax-check all scripts
         shell: bash
         run: |
