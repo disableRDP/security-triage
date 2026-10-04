@@ -20,6 +20,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 failures, skipped = [], []
+# On Windows a bare "bash" resolves to System32\bash.exe (the WSL launcher), not Git Bash.
+BASH = shutil.which("bash") or "bash"
 
 
 def check(cond, msg):
@@ -31,7 +33,7 @@ def check(cond, msg):
 def sh(args, env=None, cwd=None):
     e = dict(os.environ)
     e.update(env or {})
-    return subprocess.run(["bash"] + [str(a) for a in args], capture_output=True, text=True, env=e, cwd=cwd)
+    return subprocess.run([BASH] + [str(a) for a in args], capture_output=True, text=True, env=e, cwd=cwd)
 
 
 def triage(target, env=None):

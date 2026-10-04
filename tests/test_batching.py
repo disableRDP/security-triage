@@ -11,6 +11,7 @@ usage: python tests/test_batching.py
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -78,12 +79,20 @@ log = work / "calls.log"
 out = work / "out"
 env = dict(os.environ, SHIM_LOG=str(log), SHIM_PY=sys.executable,
            PATH=shim.as_posix() + os.pathsep + os.environ["PATH"])
-p = subprocess.run(["bash", str(ROOT / "scripts" / "triage.sh"), (work / "coll").as_posix(), out.as_posix()], capture_output=True, text=True, env=env)
+# On Windows a bare "bash" resolves to System32\bash.exe (the WSL launcher), not Git Bash.
+env_path = shim.as_posix() + os.pathsep + os.environ["PATH"]
+bash = shutil.which("bash", path=os.environ["PATH"]) or "bash"
+ver = subprocess.run([bash, "--version"], capture_output=True, text=True).stdout.split("\n")[0]
+print(f"using {bash}: {ver}")
+p = subprocess.run([bash, str(ROOT / "scripts" / "triage.sh"), (work / "coll").as_posix(), out.as_posix()], capture_output=True, text=True, env=env)
 mf = out / "manifest.json"
 check(mf.exists(), "triage.sh completed with the fake skillspector")
 if not mf.exists():
     print(p.stdout[-600:], p.stderr[-1500:])
     sys.exit(1)
+if not (work / "calls.log").exists():
+    print("DIAGNOSTIC: the fake skillspector was never called. triage.sh stderr tail:\n" + p.stderr[-2500:])
+    print("tiers:", [(t["tool"], t["status"], t["detail"][:90]) for t in json.loads(mf.read_text())["tiers"]])
 tiers = [t for t in json.loads(mf.read_text())["tiers"] if t["tool"] == "skillspector"]
 calls = log.read_text().split("\n") if log.exists() else []
 calls = [c for c in calls if c]
