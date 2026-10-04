@@ -27,6 +27,7 @@ SKILLS=("$@")
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SANDBOX_DIR="$HERE/../evals/sandbox"
 PER_SCRIPT_TIMEOUT="${TRIAGE_EXEC_TIMEOUT:-20}"
+PIDS_LIMIT=128   # applied via --pids-limit AND checked by the probe, so a dropped flag is caught
 
 pick_python() {
   for c in python3 python py; do
@@ -118,7 +119,7 @@ sandbox_flags=(
   --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add SYS_PTRACE
   --security-opt no-new-privileges --read-only
   --tmpfs /tmp:rw,mode=1777 --tmpfs /workspace:rw,mode=1777 --tmpfs /trace:rw,mode=0755
-  --pids-limit 128 --memory 512m --cpus 1
+  --pids-limit "$PIDS_LIMIT" --memory 512m --cpus 1
   -v "$(hostpath "$TARGET"):/target:ro"
 )
 DROP='setpriv --reuid=sandbox --regid=sandbox --init-groups --reset-env env PYTHONDONTWRITEBYTECODE=1'
@@ -149,7 +150,7 @@ for s in "${SKILLS[@]}"; do
 
   # 1. containment probe, same flags, same user the scripts will run as
   rc="$(docker_timed 60 "triage-sbx-$$-probe$n" "$d/probe.json" "$d/probe.err" -- \
-        "${sandbox_flags[@]}" "$TAG" $DROP "PROBE_HOST_PORT=$PROBE_PORT" python3 /monitor/containment_probe.py)"
+        "${sandbox_flags[@]}" "$TAG" $DROP "PROBE_HOST_PORT=$PROBE_PORT" "PROBE_EXPECT_PIDS=$PIDS_LIMIT" python3 /monitor/containment_probe.py)"
   if [[ "$rc" != "0" ]]; then
     failed="$("$PY" -c '
 import json, sys
