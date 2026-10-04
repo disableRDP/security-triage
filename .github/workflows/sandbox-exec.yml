@@ -1,0 +1,73 @@
+name: sandbox-exec
+
+# Acceptance test for the opt-in script-execution tier (scripts/sandbox_run.sh).
+# Needs Docker, which the author's machine lacks, so this is where it is verified.
+# Samples are harmless canaries (fake credentials, 198.51.100.7); no real malware.
+on:
+  push:
+    paths:
+      - scripts/sandbox_run.sh
+      - scripts/triage.sh
+      - evals/sandbox/**
+      - .github/workflows/sandbox-exec.yml
+  workflow_dispatch:
+
+jobs:
+  sandbox-exec:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the canary samples through the wrapper
+        run: |
+          samples=(evals/sandbox/samples/*/)
+          TRIAGE_EXECUTE=1 bash scripts/sandbox_run.sh "$PWD/evals/sandbox/samples" /tmp/run-ok "${samples[@]/#/$PWD/}"; echo "exit $?"
+          cat /tmp/run-ok/dynamic/result.json; echo
+          python evals/sandbox/ci_assert.py ok /tmp/run-ok "${samples[@]}"
+
+      # Never trust a sandbox that has not been tested: weaken it on purpose
+      # (a docker shim rewrites the flags) and require a REFUSAL, with nothing run.
+      - name: Probe must refuse when the network is not disabled
+        run: |
+          mkdir -p /tmp/shim
+          real="$(command -v docker)"
+          printf '%s\n' '#!/usr/bin/env bash' 'args=()' 'for a in "$@"; do [ "$a" = none ] && a=bridge; args+=("$a"); done' "exec $real \"\${args[@]}\"" > /tmp/shim/docker
+          chmod +x /tmp/shim/docker
+          set +e
+          PATH=/tmp/shim:$PATH TRIAGE_EXECUTE=1 bash scripts/sandbox_run.sh "$PWD/evals/sandbox/samples" /tmp/run-bridge "$PWD/evals/sandbox/samples/benign"
+          rc=$?
+          set -e
+          echo "exit $rc"; test "$rc" = 5
+          python evals/sandbox/ci_assert.py refused /tmp/run-bridge
+
+      - name: Probe must refuse when the pids limit is missing
+        run: |
+          mkdir -p /tmp/shim2
+          real="$(command -v docker)"
+          printf '%s\n' '#!/usr/bin/env bash' 'args=(); skip=0' 'for a in "$@"; do if [ $skip = 1 ]; then skip=0; continue; fi; [ "$a" = --pids-limit ] && { skip=1; continue; }; args+=("$a"); done' "exec $real \"\${args[@]}\"" > /tmp/shim2/docker
+          chmod +x /tmp/shim2/docker
+          set +e
+          PATH=/tmp/shim2:$PATH TRIAGE_EXECUTE=1 bash scripts/sandbox_run.sh "$PWD/evals/sandbox/samples" /tmp/run-pids "$PWD/evals/sandbox/samples/benign"
+          rc=$?
+          set -e
+          echo "exit $rc"; test "$rc" = 5
+          python evals/sandbox/ci_assert.py refused /tmp/run-pids
+
+      - name: Through triage.sh, opt-in and default
+        run: |
+          out=$(mktemp -d)
+          TRIAGE_EXECUTE=1 bash scripts/triage.sh "$PWD/evals/sandbox/samples/malicious-canary" "$out" > /tmp/manifest.json 2>/dev/null || true
+          grep sandbox-exec /tmp/manifest.json
+          out2=$(mktemp -d)
+          bash scripts/triage.sh "$PWD/evals/sandbox/samples/malicious-canary" "$out2" 2>/dev/null | grep sandbox-exec | grep -q "execution not requested"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-exec-results
+          path: |
+            /tmp/run-ok
+            /tmp/run-bridge
+            /tmp/run-pids

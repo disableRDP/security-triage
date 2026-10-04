@@ -348,6 +348,31 @@ else
   record 3 semgrep skipped "not installed - pip install semgrep" ""
 fi
 
+echo "== Tier 4: sandboxed script execution (opt-in) ==" >&2
+
+# Executes untrusted code, so sandbox_run.sh refuses unless TRIAGE_EXECUTE=1.
+# Its own result file becomes the manifest entry, so a skip (not requested, no
+# Docker, nothing to run), a partial run and a REFUSAL (containment probe
+# failed) are all reported the same way as every other tier. It only adds
+# coverage: it can never turn a static finding into "clean".
+if [[ -z "$DIR_TARGET" ]]; then
+  record 4 sandbox-exec skipped "no local files for a bare registry reference" ""
+elif [[ ${#real_skill_mds[@]} -eq 0 ]]; then
+  record 4 sandbox-exec skipped "no SKILL.md found, so there is no skill scripts/ directory to execute" ""
+else
+  skill_dirs=()
+  for f in "${real_skill_mds[@]}"; do skill_dirs+=("$(cd "$(dirname "$f")" && pwd)"); done
+  tgt_abs="$(cd "$DIR_TARGET" && pwd)"
+  bash "$(dirname "$0")/sandbox_run.sh" "$tgt_abs" "$OUT" "${skill_dirs[@]}" >&2
+  res="$OUT/dynamic/result.json"
+  if [[ -f "$res" ]]; then
+    read_field() { "$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$res" "$1"; }
+    record 4 sandbox-exec "$(read_field status)" "$(read_field detail)" "$(read_field output)"
+  else
+    record 4 sandbox-exec ran-with-errors "sandbox_run.sh produced no result file" ""
+  fi
+fi
+
 # Staging integrity, checked at the END so it also catches removals that
 # happen during the scan. Found when scanning real malicious skills on a
 # Windows host: Defender deleted 20 of 111 sampled malicious skills'

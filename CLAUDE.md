@@ -24,10 +24,11 @@ v1 complete: a layered static-analysis pipeline (gitleaks + osv-scanner,
 SkillSpector, GuardDog, Semgrep — see README's tier table). CI (GitHub
 Actions, `.github/workflows/smoke-test.yml`) passes on ubuntu/macos/windows.
 GuardDog is wired in but not installed locally (needs a Rust/Cargo
-toolchain) — it's skipped gracefully, not broken. v2 dynamic execution is
-*evaluated, not built*: `evals/sandbox/README.md` holds the findings (use a
-`--network none` wrapper, not Harbor; Harbor only for live-agent
-prompt-injection testing, untested). Drift detection, SBOM and license
+toolchain) — it's skipped gracefully, not broken. Tier 4 (opt-in, `TRIAGE_EXECUTE=1`) runs skill
+scripts via `scripts/sandbox_run.sh`, a `--network none` wrapper with a
+refuse-if-uncontained probe; verified only by the `sandbox-exec` CI workflow
+(no Docker locally). `evals/sandbox/README.md` holds the evaluation (Harbor
+only for live-agent prompt-injection testing, untested). Drift detection, SBOM and license
 checks remain out of scope.
 
 ## Working conventions
@@ -83,3 +84,4 @@ pip install guarddog   # needs a Rust/Cargo toolchain first - not installed here
 - `SKILL.md` — the actual skill definition Claude Code loads when invoked
 - `.github/workflows/smoke-test.yml` — CI
 - `.github/workflows/sandbox-eval.yml` — manual-only sandbox evaluation
+- `.github/workflows/sandbox-exec.yml` — acceptance test for tier 4 (`scripts/sandbox_run.sh`)

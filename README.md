@@ -150,7 +150,25 @@ static-only). Semgrep's default `--config auto` requires Semgrep's metrics
 to be enabled, which sends usage metadata to semgrep.dev; set
 `TRIAGE_SEMGREP_CONFIG=p/default` to run with metrics off instead.
 
-## v2 roadmap (not built yet)
+## Tier 4: sandboxed script execution (opt-in, 2026-10-04)
+
+`scripts/sandbox_run.sh` runs a skill's own `scripts/*.py` and `scripts/*.sh`
+in a locked-down container under strace and reports what they *tried* to do.
+It executes untrusted code, so it only runs with `TRIAGE_EXECUTE=1`; otherwise
+the manifest shows `skipped`. Also `skipped` when Docker (daemon, not just the
+CLI) is missing or the skill has no runnable scripts. Scripts run with no
+arguments under `--network none`; `package.json`/`setup.py` install hooks are
+never executed. Before every run an identical container runs a containment
+probe (no non-loopback interface, host listener / public HTTP / DNS / ICMP all
+unreachable, not root, no capabilities, read-only rootfs, pids limit set) and
+the tier **refuses to report** if any check fails or cannot be evaluated.
+Timeouts and unexecuted files are `partial` coverage gaps, never "clean". It
+only adds coverage: an argument- or time-gated payload is invisible to it, so
+it never replaces the static tiers. Verified by the `sandbox-exec` workflow
+(needs Docker; the author's machine has none), which includes tests that
+deliberately weaken the sandbox and require a refusal.
+
+## v2 roadmap (script execution built; the rest not)
 
 **Sandbox evaluation done (2026-10-03):** Harbor is *not* the right layer
 for running a suspect's scripts. Its default `no-network` still resolves
