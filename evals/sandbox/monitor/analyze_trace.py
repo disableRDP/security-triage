@@ -37,6 +37,56 @@ SOCKADDR = re.compile(
 URL = re.compile(r'https?://([^/\s"\\]+)')
 
 
+STR = re.compile(r'"((?:[^"\\]|\\.)*)"')
+ESC = re.compile(r'\\(?:x([0-9a-fA-F]{2})|([0-7]{1,3})|(.))', re.S)
+SIMPLE = {"n": 10, "t": 9, "r": 13, "a": 7, "b": 8, "f": 12, "v": 11}
+
+
+def unescape(lit):
+    """Bytes of a strace string literal (octal/hex/simple escapes, as printed with -s N)."""
+    def one(m):
+        if m.group(1):
+            return bytes([int(m.group(1), 16)])
+        if m.group(2):
+            return bytes([int(m.group(2), 8) & 0xFF])
+        c = m.group(3)
+        return bytes([SIMPLE[c]]) if c in SIMPLE else c.encode()
+    out, pos = b"", 0
+    for m in ESC.finditer(lit):
+        out += lit[pos:m.start()].encode("latin-1", "replace") + one(m)
+        pos = m.end()
+    return out + lit[pos:].encode("latin-1", "replace")
+
+
+def dns_qname(buf):
+    """Return the queried name if buf looks like a DNS query (one question), else None.
+
+    This is what makes a raw-socket lookup visible: the connect()/sendto() address is only the
+    resolver, the destination of the data is in the question section.
+    """
+    if len(buf) < 17 or buf[2] & 0x80:       # header + shortest question; QR bit set = a response
+        return None
+    if int.from_bytes(buf[4:6], "big") != 1:  # QDCOUNT
+        return None
+    labels, i = [], 12
+    while i < len(buf):
+        n = buf[i]
+        if n == 0:
+            break
+        if n > 63 or i + 1 + n > len(buf):
+            return None
+        label = buf[i + 1:i + 1 + n]
+        if not all(32 < c < 127 for c in label):
+            return None
+        labels.append(label.decode("ascii"))
+        i += 1 + n
+    else:
+        return None
+    if not labels or len(buf) < i + 5 or int.from_bytes(buf[i + 3:i + 5], "big") != 1:  # QCLASS IN
+        return None
+    return ".".join(labels)
+
+
 def is_loopback(addr):
     return addr.startswith("127.") or addr == "::1"
 
@@ -86,6 +136,25 @@ def analyze(trace_path):
                 external = True
                 kind = "dns-lookup-attempt" if port == "53" else "external-connect-attempt"
                 add(kind, "review", f"{addr}:{port} ({result})")
+            elif call in ("sendto", "send", "sendmsg", "sendmmsg", "write"):
+                # Any string literal in a send-type call that parses as a DNS question. `write` is
+                # included because a connected UDP socket can be written to directly.
+                for lit in STR.findall(rest):
+                    q = dns_qname(unescape(lit))
+                    if q:
+                        external = True   # a DNS question is egress even if the resolver is local
+                        add("dns-query", "review", f"{q} ({result})")
+                        break
+                # sendto()/sendmsg() with an explicit destination never calls connect(): a UDP
+                # exfil channel is otherwise invisible.
+                sm = SOCKADDR.search(rest)
+                if sm and call != "write":
+                    port, v4, v6 = sm.groups()
+                    addr = v4 or v6
+                    if not is_loopback(addr):
+                        external = True
+                        add("dns-lookup-attempt" if port == "53" else "external-connect-attempt",
+                            "review", f"{addr}:{port} via {call} ({result})")
             elif call == "execve":
                 em = re.match(r'"([^"]+)", \[(.*?)\](?:,|\))', rest)
                 if not em:

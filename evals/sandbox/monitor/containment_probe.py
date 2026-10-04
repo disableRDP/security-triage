@@ -142,7 +142,11 @@ try:
     check("dns-unresolvable", False, f"example.com resolved to {ip}")
 except OSError:
     check("dns-unresolvable", True, "example.com did not resolve")
-check("icmp-no-reply", not icmp_reply("1.1.1.1"), "1.1.1.1")
+# The public target often never answers on CI runners, which made the ICMP row inconclusive; the
+# host/gateway does answer on a bridge, so it doubles as the positive control (see ci_assert.py).
+icmp_targets = sorted({"1.1.1.1"} | {h for h in hosts if h and h[0].isdigit()})
+icmp_hit = [h for h in icmp_targets if icmp_reply(h)]
+check("icmp-no-reply", not icmp_hit, f"echo reply from {icmp_hit}" if icmp_hit else f"tried {icmp_targets}")
 
 contained = all(c["ok"] for c in checks)
 print(json.dumps({"contained": contained, "checks": checks}, indent=2))

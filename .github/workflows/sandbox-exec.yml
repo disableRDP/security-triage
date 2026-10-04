@@ -39,7 +39,7 @@ jobs:
           rc=$?
           set -e
           echo "exit $rc"; test "$rc" = 5
-          python evals/sandbox/ci_assert.py refused /tmp/run-bridge
+          python evals/sandbox/ci_assert.py refused /tmp/run-bridge only-loopback-interface host-listener-unreachable dns-unresolvable icmp-no-reply
 
       - name: Probe must refuse when the pids limit is missing
         run: |
@@ -53,6 +53,13 @@ jobs:
           set -e
           echo "exit $rc"; test "$rc" = 5
           python evals/sandbox/ci_assert.py refused /tmp/run-pids
+
+      # Informational: why did `strace -u` appear not to protect the trace? Prints facts only.
+      - name: Diagnostic - strace -u versus a setpriv drop
+        continue-on-error: true
+        run: |
+          docker build -q -t diag-img -f evals/sandbox/image/Dockerfile evals/sandbox >/dev/null
+          docker run --rm --user 0 --network none --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add SYS_PTRACE             diag-img bash /monitor/strace_u_diag.sh
 
       - name: Through triage.sh, opt-in and default
         run: |
