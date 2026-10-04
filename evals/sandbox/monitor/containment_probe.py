@@ -109,7 +109,11 @@ for p in ("/sys/fs/cgroup/pids.max", "/sys/fs/cgroup/pids/pids.max"):
         break
     except OSError:
         continue
-check("pids-limit", pids is not None and pids != "max", f"pids.max={pids}")
+# Not merely "!= max": a host default (systemd TasksMax) can be a huge finite number
+# (19151 seen on a CI runner with no --pids-limit), so compare to the intended limit.
+want = os.environ.get("PROBE_EXPECT_PIDS", "")
+ok = pids is not None and pids.isdigit() and want.isdigit() and int(pids) <= int(want)
+check("pids-limit", ok, f"pids.max={pids}, expected <= {want or '(PROBE_EXPECT_PIDS not set)'}")
 
 w = can_write("/etc", "root")
 check("rootfs-read-only", not w, "write to /etc " + ("succeeded" if w else "refused"))
