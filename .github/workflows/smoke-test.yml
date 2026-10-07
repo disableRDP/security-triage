@@ -51,6 +51,10 @@ jobs:
         shell: bash
         run: python tests/test_domain_check.py
 
+      - name: Prompt-injection harness (offline; fake client, simulated world)
+        shell: bash
+        run: python tests/test_injection_harness.py
+
       - name: Semgrep default and coverage-error reporting (fake semgrep)
         shell: bash
         run: python tests/test_semgrep_coverage.py

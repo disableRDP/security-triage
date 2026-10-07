@@ -86,6 +86,7 @@ pip install guarddog   # needs a Rust/Cargo toolchain first - not installed here
 - `.github/workflows/smoke-test.yml` — CI
 - `.github/workflows/sandbox-eval.yml` — manual-only sandbox evaluation
 - `tests/test_domain_check.py` — offline tests for tier 5 (fake feeds + fake RDAP)
+- `evals/injection/` — prompt-injection study harness (simulated world, verifier, cost projection); `tests/test_injection_harness.py` tests it offline
 - `tests/test_semgrep_coverage.py` — Semgrep default config and coverage-error reporting
 - `tests/test_batching.py`, `tests/test_integrity_history.py` — batching control flow; integrity baselines, zip cap, opt-in git history
 - `.github/workflows/sandbox-exec.yml` — acceptance test for tier 4 (`scripts/sandbox_run.sh`)
