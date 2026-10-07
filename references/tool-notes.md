@@ -257,7 +257,7 @@ Two kinds of signal, different confidence levels:
 
 **Rule:** state which kind of finding it is when reporting a GuardDog hit.
 
-## Semgrep `--config auto` (tier 3)
+## Semgrep (tier 3; `--config p/default`, was `auto`)
 
 Tested on a real 856-file application with no `SKILL.md` (no skill-shaped
 assumptions at all): found exactly one real issue (Dockerfile running as
@@ -348,10 +348,15 @@ everything, and the manifest `detail` says what was missed. Two sources:
 found in what could be checked" and name the gap.
 
 **Semgrep `--config auto` requires metrics to be on** (verified: it errors
-with `--metrics=off`). That means usage metadata goes to semgrep.dev on
-every scan; I did not verify exactly what is sent. For a target you can't
-let that touch, set `TRIAGE_SEMGREP_CONFIG=p/default`, which runs with
-metrics off (verified to produce the same findings on a test fixture). The
+with `--metrics=off`), so usage metadata goes to semgrep.dev on every scan; I
+did not verify exactly what is sent. The default is therefore `p/default` with
+`--metrics=off`. Measured 2026-10-07: on 411 pip files 54 vs 54 findings, same
+18 rules; on OWASP/NodeGoat 37 vs 37, same 20 rules (an extra `auto` hit on
+minified jquery.min.js appeared only in a run where Semgrep logged a Timeout
+on that file, and `auto` matched `p/default` in a second run; a later
+`p/default` run then logged the same Timeout, so it is per-run variance on that
+file under either config, not a ruleset difference). `p/default` was also faster (20s vs 29s; 39s vs 71s). Other languages are unmeasured;
+`TRIAGE_SEMGREP_CONFIG=auto` restores the old behavior. The
 `--x-ignore-semgrepignore-files` flag is experimental; if a future Semgrep
 removes it the run errors loudly, and the hostile-fixture CI test fails.
 
@@ -399,3 +404,16 @@ pipeline's layered design in the first place.
   404, reported as a coverage gap, not clean.
 - Measured false positives: 0 matches over 1,091 domains in 10,914 benign
   files. Recall against real malicious code is untested.
+
+**Semgrep coverage errors (tier 3).** The JSON `errors` list says what Semgrep
+could not analyze. `Timeout` is one rule not finishing on one file (the other
+rules still ran there) and means that rule's findings for that file are
+missing; it, out-of-memory, unparsable files and skipped paths make the entry
+`partial`, naming the rule and file. `PartialParsing` means the file was
+analyzed only up to the unparsable spot; common on minified or templated files
+(NodeGoat: 12), counted in the detail, not a gap by itself. Errors about the
+staged top-level `.git/` (`hooks/*.sample`) are repository metadata and are set
+aside. `.git/` is still scanned, not excluded: `--exclude .git` and
+`--exclude /.git` both also skip a nested `sub/.git/`, which a hostile zip
+could use to hide files. Semgrep's per-file timeout makes results on huge
+minified files slightly non-deterministic, so do not assert exact counts there.

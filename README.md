@@ -34,7 +34,7 @@ whole report on the answer.
 | 0 | [gitleaks](https://github.com/gitleaks/gitleaks) + [OSV-Scanner](https://github.com/google/osv-scanner) | secrets, known CVEs | Exact-match tools — no semantic assumptions, always safe to run |
 | 1 | [SkillSpector](https://github.com/NVIDIA/skillspector) | Claude Code skills, MCP servers, agent configs | Skipped entirely with no `SKILL.md`/MCP manifest anywhere (its output is discarded by rule otherwise); scoped to the actual skills-collection directory with `--recursive` when a monorepo bundles several — measured 10min → 35sec on a real 46-skill repo rather than scanning the whole tree |
 | 2 | [GuardDog](https://github.com/DataDog/guarddog) | registry packages (npm/PyPI/Go/RubyGems/Cargo/GH Actions) | Runs per detected manifest, not a global guess |
-| 3 | [Semgrep](https://github.com/semgrep/semgrep) `--config auto` | general source code | No skill/app assumptions to misapply |
+| 3 | [Semgrep](https://github.com/semgrep/semgrep) `--config p/default` (metrics off) | general source code | No skill/app assumptions to misapply |
 | 4 | sandboxed script execution (opt-in) | skill `scripts/*.py`, `scripts/*.sh` | Only tier that runs target code; see below |
 | 5 | domain reputation (abuse.ch URLhaus + ThreatFox, RDAP age) | every URL in any text file | Exact-match lookups, no semantic assumptions; network opt-in; see below |
 
@@ -148,9 +148,16 @@ for the one thing that would close it.
 Also not covered: secrets that were committed and later removed (staging
 clones with `--depth 1` and gitleaks scans the working tree), and
 SkillSpector's LLM-assisted analyzers (off by default, so it runs
-static-only). Semgrep's default `--config auto` requires Semgrep's metrics
-to be enabled, which sends usage metadata to semgrep.dev; set
-`TRIAGE_SEMGREP_CONFIG=p/default` to run with metrics off instead.
+static-only). Semgrep runs `--config p/default` with metrics off. It used to
+be `--config auto`, which requires metrics on (usage metadata to semgrep.dev);
+on 411 Python files and on OWASP/NodeGoat the two gave identical findings
+(the one differing hit sat in a minified file where Semgrep times out from
+run to run under either config) and `p/default` was
+faster, so the privacy-preserving one is the default. `TRIAGE_SEMGREP_CONFIG=auto`
+restores the old behavior. Semgrep's own analysis errors now reach the
+manifest: a rule that timed out on a file, or out of memory, makes the entry
+`partial` and names it (it used to say `ran, exit 0`); `PartialParsing`
+warnings are counted in the detail only.
 
 ## Tier 4: sandboxed script execution (opt-in, 2026-10-04)
 

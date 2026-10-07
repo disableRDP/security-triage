@@ -104,6 +104,9 @@ applies; never guess which lens is "right" for the input.
    A `staging/integrity` entry marked `partial` means files were removed
    from the scanned tree (often antivirus), so some of the artifact was
    never analyzed; say that plainly.
+   A Semgrep entry marked `partial` names a rule that timed out (or ran out
+   of memory) on a file: that rule's findings for that file are missing, so
+   say a clean result there covers "what Semgrep could analyze".
    A `gitleaks-history` entry (only with `TRIAGE_GIT_HISTORY=1`) scans past
    commits: a hit there is a real credential even though it was removed
    from the current files, so say it should be treated as compromised

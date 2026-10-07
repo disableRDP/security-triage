@@ -51,6 +51,10 @@ jobs:
         shell: bash
         run: python tests/test_domain_check.py
 
+      - name: Semgrep default and coverage-error reporting (fake semgrep)
+        shell: bash
+        run: python tests/test_semgrep_coverage.py
+
       - name: Batching test (fake skillspector reproducing the 32-skill cap)
         shell: bash
         run: python tests/test_batching.py

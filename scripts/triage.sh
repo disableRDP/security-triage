@@ -80,8 +80,12 @@ run_capture() {
 # "<ran|partial>|<detail>". reference_missing is benign noise (a doc mentions
 # a path that isn't bundled) and does not count as a gap. $2=1 ignores the
 # --recursive 32-skill cap, which the caller covers by scanning the remainder.
+# Native Windows Python cannot open MSYS paths like /tmp/x, so every path handed
+# to $PY goes through this (a no-op where cygpath does not exist).
+pypath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+
 ss_coverage() {
-  "$PY" - "$1" "${2:-0}" <<'PY'
+  "$PY" - "$(pypath "$1")" "${2:-0}" <<'PY'
 import json, sys, collections
 d = json.load(open(sys.argv[1], encoding="utf-8"))
 ignore_cap = sys.argv[2] == "1"
@@ -102,6 +106,69 @@ bits = [f"{k} x{v}" for k, v in sorted(material.items())] + sorted(limits)
 if omitted:
     bits.append(f"{omitted} skills unscanned")
 print(("partial" if bits else "ran") + "|" + ("coverage gaps: " + "; ".join(bits) if bits else "coverage complete"))
+PY
+}
+
+# Semgrep reports what it could not analyze in the JSON "errors" list, but a
+# bare "exit 0" in the manifest threw that away (a rule that timed out on a file
+# still gave "ran"). Prints "<ran|partial>|<detail>".
+#  - Timeout: ONE rule did not finish on ONE file (the other rules still ran
+#    there), but that rule's findings for that file are missing -> partial.
+#  - Anything else except PartialParsing (out of memory, a file Semgrep could
+#    not parse at all, skipped paths) -> partial.
+#  - PartialParsing: the file was parsed up to the bad spot and the rest was
+#    analyzed; counted in the detail only (minified/templated files do this).
+#  - Errors about the target's top-level .git/ (hooks/*.sample) are repository
+#    metadata, not target content, and are counted apart. The directory is still
+#    scanned: excluding ".git" would also skip a nested sub/.git/ (verified: both
+#    `--exclude .git` and `--exclude /.git` do), which a hostile zip could use
+#    to hide files.
+semgrep_coverage() {
+  "$PY" - "$(pypath "$1")" "$(pypath "$2")" <<'PY'
+import collections, json, os, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+target = sys.argv[2]
+
+
+def is_target_git(path):
+    p = path.replace("\\", "/")
+    i = p.find("/.git/")
+    if i < 0:
+        return False
+    try:
+        return os.path.samefile(p[:i] or "/", target)
+    except OSError:
+        return False
+
+
+hard, partial_parse, git_noise, examples = collections.Counter(), 0, 0, {}
+for e in d.get("errors", []):
+    t = e.get("type")
+    t = t if isinstance(t, str) else (t[0] if t else "?")
+    path = e.get("path") or ""
+    if is_target_git(path):
+        git_noise += 1
+    elif t == "PartialParsing":
+        partial_parse += 1
+    else:
+        hard[t] += 1
+        examples.setdefault(t, (e.get("rule_id") or "", os.path.relpath(path, target).replace("\\", "/") if path else ""))
+skipped = d.get("paths", {}).get("skipped") or []
+if skipped:
+    hard["skipped paths"] += len(skipped)
+bits = []
+for t, n in sorted(hard.items()):
+    rule, rel = examples.get(t, ("", ""))
+    short = rule.split(".")[-1] if rule else ""
+    bits.append(f"{n} {t}" + (f" (e.g. rule {short} on {rel})" if short and rel else ""))
+notes = []
+if partial_parse:
+    notes.append(f"{partial_parse} PartialParsing warning(s): those files were analyzed only up to the unparsable spot")
+if git_noise:
+    notes.append(f"{git_noise} warning(s) about the staged .git/ metadata ignored")
+status = "partial" if bits else "ran"
+detail = ("coverage gaps: " + "; ".join(bits) if bits else "no analysis errors") + ("; " + "; ".join(notes) if notes else "")
+print(status + "|" + detail)
 PY
 }
 
@@ -428,15 +495,23 @@ if have semgrep; then
     # skipped). The --x- flag is experimental: if a future Semgrep removes
     # it the run errors loudly (ran-with-errors) rather than under-scanning,
     # and the CI hostile-fixture test fails.
-    # "auto" requires Semgrep metrics to be on (it errors with --metrics=off);
-    # TRIAGE_SEMGREP_CONFIG=p/default uses a named ruleset with metrics off.
-    sg_config="${TRIAGE_SEMGREP_CONFIG:-auto}"
+    # Default is the named ruleset p/default with metrics off. "auto" needs
+    # Semgrep metrics ON (it errors with --metrics=off), which sends usage
+    # metadata to semgrep.dev. Measured 2026-10-07 against auto on 411 Python
+    # files and on OWASP/NodeGoat: identical findings (one extra auto hit was
+    # run-to-run timeout noise), and p/default was faster. Opt back in with
+    # TRIAGE_SEMGREP_CONFIG=auto.
+    sg_config="${TRIAGE_SEMGREP_CONFIG:-p/default}"
     sg_metrics=""
     [[ "$sg_config" != "auto" ]] && sg_metrics="--metrics=off"
     rc=$(run_capture "$f" "$e" -- semgrep --config "$sg_config" $sg_metrics --json \
       --disable-nosem --no-git-ignore --max-target-bytes 0 --x-ignore-semgrepignore-files "$DIR_TARGET")
-    [[ "$rc" == "0" || "$rc" == "1" ]] && record 3 semgrep ran "exit $rc" "$f" \
-      || record 3 semgrep ran-with-errors "exit $rc, see $e" "$e"
+    if [[ "$rc" == "0" || "$rc" == "1" ]]; then
+      cov="$(semgrep_coverage "$f" "$DIR_TARGET")"
+      record 3 semgrep "${cov%%|*}" "exit $rc (config $sg_config); ${cov#*|}" "$f"
+    else
+      record 3 semgrep ran-with-errors "exit $rc, see $e" "$e"
+    fi
   else
     record 3 semgrep skipped "no local files for a bare registry reference" ""
   fi
